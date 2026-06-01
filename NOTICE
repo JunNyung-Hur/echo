@@ -1,0 +1,17 @@
+echo
+Copyright 2026 JunNyung-Hur
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+This product bundles FFmpeg (https://ffmpeg.org), licensed under the GNU Lesser
+General Public License, version 3 (LGPL v3). FFmpeg is bundled unmodified and is
+invoked as a separate executable at runtime (not linked into echo). The bundled
+build enables LGPL components only (no GPL-licensed codecs such as x264/x265, and
+no non-free components).
+
+See THIRD-PARTY-NOTICES.md for the full attribution, license text reference, and
+where to obtain the corresponding source.

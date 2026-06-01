@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(180deg, #f0f9ff 0%, #ffffff 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+@layer components {
+  .form-input {
+    @apply w-full text-sm text-gray-800 border border-gray-200 rounded-md px-2.5 py-1.5 outline-none focus:border-sky-300;
+  }
+}
+
+/* Indeterminate progress bar (file import — local convert has no real %). */
+@keyframes indeterminate {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
+::selection {
+  background-color: #7dd3fc;
+  color: white;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* Setup wizard sub-step transition — fade + slight rise on each step change. */
+@keyframes wizardStepIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.wizard-step { animation: wizardStepIn 0.22s ease-out; }
+
+/* Setup "all set" interstitial — gentle scale-in. */
+@keyframes setupDoneIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+.setup-done { animation: setupDoneIn 0.45s ease-out; }
+
+/* Main app first paint — fade only (translateY caused a transient scrollbar). */
+@keyframes appEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.app-enter { animation: appEnter 0.5s ease-out; }

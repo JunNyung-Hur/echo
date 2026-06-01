@@ -1,0 +1,35 @@
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Build info
+src-ui/tsconfig.tsbuildinfo
+
+# Local e2e recordings (kept locally, not committed)
+recordings/
+
+# e2e run artifacts (turn-별 스크린샷·로그 — 로컬 보존, 커밋 제외)
+docs/dev/e2e/runs/
+
+# Claude Code (로컬 설정·세션·스케줄 — 커밋 제외)
+.claude/
+
+# 동봉 ffmpeg 사이드카(LGPL 빌드 — 로컬에서 받아 넣음, 대용량이라 커밋 제외)
+src-tauri/binaries/*.exe

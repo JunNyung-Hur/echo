@@ -1,0 +1,74 @@
+[package]
+name = "echo-app"
+version = "0.0.1"
+description = "echo — Personal Second Brain"
+authors = ["JunNyung-Hur"]
+edition = "2021"
+
+[lib]
+name = "echo_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client for endpoint test + (Phase 2) ASR/LLM calls
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "stream"] }
+base64 = "0.22"  # streaming ASR audio_url payload
+futures-util = "0.3"  # SSE byte-stream consumption for chat streaming
+
+# Native audio capture (D-023) — mic + system loopback as one device list
+cpal = "0.16"
+hound = "3.5"  # WAV chunk writer
+rustfft = "6"  # waveform FFT spectrum (matches old AnalyserNode look)
+
+# DB
+sqlx = { version = "0.8", default-features = false, features = [
+    "sqlite",
+    "runtime-tokio",
+    "macros",
+    "migrate",
+    "chrono",
+    "uuid",
+] }
+
+# async runtime (tauri::async_runtime backs onto tokio)
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time", "process", "fs", "io-util"] }
+
+# observability + error
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+anyhow = "1"
+
+# cancellation registry
+dashmap = "6"
+
+# IDs / time
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+# OS input-device volume (IAudioEndpointVolume) — cpal captures only, no volume
+# control. Used by audio_volume.rs to get/set the selected mic's Windows volume.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_Foundation",
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
