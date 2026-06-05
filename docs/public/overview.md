@@ -6,7 +6,7 @@ Anything that crosses your mind — a meeting, a lecture, an interview, a memo, 
 
 ## 1. In one line
 
-From capture to organized notes, everything happens on your laptop, and the organizing is done by asking an AI agent like a colleague sitting next to you. No account, no server — all local.
+From capture to organized notes, the organizing is done by asking an AI agent like a colleague sitting next to you. It's a single-user desktop app — no account, no server.
 
 ---
 
@@ -20,12 +20,10 @@ From capture to organized notes, everything happens on your laptop, and the orga
 
 ## 3. What makes it different
 
-- **Local-first, personal** — no account or server; everything lives in local SQLite on your device. Built slim, for one user.
 - **An AI agent beside the note** — fix details, restructure, summarize, change the style, recover from failures, all in natural language, no menu hunting. The agent knows where the note stands and suggests the next step.
-- **Two kinds of notes** — *Minutes* (record → transcribe → structured write-up) and *Freeform* (a chat-first notepad you grow by typing and by attaching voice/audio that echo transcribes and weaves in).
-- **Organizing that adapts to the input** — minutes for a meeting, organized information for a lecture/briefing, a tight summary for a short monologue.
+- **Two kinds of notes, shaped to the input** — *Minutes* (record → transcribe → structured write-up) and *Freeform* (a chat-first notepad you grow by typing and by attaching voice/audio that echo transcribes and weaves in). A meeting becomes minutes, a lecture becomes organized notes, a short thought a tight summary.
 - **You stay in control of the result** — edit a generated note by hand or refine it in plain language, and roll back to any earlier version.
-- **Bring your own models** — connect any OpenAI-compatible LLM and ASR endpoint, cloud or local (Ollama).
+- **Bring your own models** — connect any OpenAI-compatible LLM and ASR endpoint, cloud or local (vLLM).
 
 ---
 

@@ -1,6 +1,6 @@
 # echo — User Guide
 
-echo is a personal Second Brain desktop app. Capture anything — a meeting, a lecture, a quick memo, thinking out loud — and an AI agent beside your note transcribes it and organizes it into clean notes that you grow and refine by chatting. No account, no server; it all runs on your laptop.
+echo is a personal Second Brain desktop app. Capture anything — a meeting, a lecture, a quick memo, thinking out loud — and an AI agent beside your note transcribes it and organizes it into clean notes that you grow and refine by chatting. It's a single-user app — no account, no server.
 
 #### Contents
 
@@ -21,7 +21,7 @@ echo is a personal Second Brain desktop app. Capture anything — a meeting, a l
 
 ## 1. Install & first-run setup
 
-echo is a desktop app you install on your laptop. There's no login or account, and all your data stays local.
+echo is a desktop app you install on your laptop. There's no login or account; your data is stored locally on your device.
 
 1. Download and run **`echo_<version>_x64-setup.exe`**.
 2. **ffmpeg is bundled** — echo ships its own ffmpeg/ffprobe, so you don't need to install anything for audio. WebView2 is installed automatically if missing (Windows 11 already has it).
@@ -29,7 +29,7 @@ echo is a desktop app you install on your laptop. There's no login or account, a
 On first launch you go through a short setup:
 
 1. **Language** — Korean / English. This becomes the default for both the app UI and the AI output language (changeable later in Settings).
-2. **Register your AI models** — echo doesn't bundle any AI; you connect your own OpenAI-compatible endpoints. Register one for transcription (**ASR**) and one for organizing/chat (**LLM**). A cloud API key or a local server (Ollama, etc.) both work, the same way.
+2. **Register your AI models** — echo doesn't bundle any AI; you connect your own OpenAI-compatible endpoints. Register one for transcription (**ASR**) and one for organizing/chat (**LLM**). A cloud API key or a local server (vLLM, etc.) both work, the same way.
 
 > Until both endpoints are set, recording/transcription and note generation can't run.
 
@@ -212,7 +212,7 @@ A. Ask the agent: "shorter", "make a table", "turn it into lecture notes", "tidy
 A. Make sure an **ASR** and **LLM** endpoint are registered in Settings — transcription and organizing need both.
 
 **Q. How do I connect an AI model?**
-A. In Settings → AI models, register OpenAI-compatible endpoints for ASR and LLM — a cloud API key, or a local server like Ollama.
+A. In Settings → AI models, register OpenAI-compatible endpoints for ASR and LLM — a cloud API key, or a local server like vLLM.
 
 **Q. Where is my data stored?**
 A. In a local SQLite database in your app-data folder. No account, no server; the only thing that leaves your machine is the calls to the AI endpoints you registered.

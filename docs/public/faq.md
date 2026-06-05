@@ -7,7 +7,7 @@ Common questions from both user and developer angles. echo is a personal desktop
 ## 1. General
 
 ### Q. What does echo do?
-Capture anything — by recording it or jotting it — and AI transcribes and organizes it into a note. You refine the note by asking an AI agent beside it in plain language. It all runs locally.
+Capture anything — by recording it or jotting it — and AI transcribes and organizes it into a note. You refine the note by asking an AI agent beside it in plain language.
 
 ### Q. What is it good for?
 - Meetings with clear decisions/actions (minutes).
@@ -24,7 +24,7 @@ The note's shape and length adjust to the input.
 No. It's single-user with no login, and all data is stored in local SQLite on your device.
 
 ### Q. Is AI built in?
-No. You connect OpenAI-compatible endpoints yourself — a cloud API key or a local server like Ollama.
+No. You connect OpenAI-compatible endpoints yourself — a cloud API key or a local server like vLLM.
 
 ### Q. Do I need to install ffmpeg?
 No. The installer **bundles ffmpeg** for you. (For a from-source dev build, ffmpeg on your PATH is used instead.)
@@ -61,7 +61,7 @@ Search by title/memo/location keywords, narrow by `#tag`, or scope by date with 
 Usually a transient LLM-server issue. A red notice card appears in the chat and clears when you send the next message, which retries.
 
 ### Q. Where is my data stored?
-Local SQLite in your app-data folder (`…/com.echo.app/echo.db`). The only thing leaving your machine is the calls to the AI endpoints you registered.
+Local SQLite in your app-data folder (`…/com.echo.app/echo.db`). The only thing leaving your machine is the calls to the AI endpoints you registered — point those at a local model (e.g. vLLM) and nothing leaves at all.
 
 ---
 
