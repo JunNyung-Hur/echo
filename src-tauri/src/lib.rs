@@ -11,6 +11,7 @@ mod ffmpeg;
 mod models;
 mod prompts;
 mod repo;
+mod storage;
 mod timeline;
 mod worker;
 
@@ -46,6 +47,9 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             std::fs::create_dir_all(&app_data_dir)?;
+            // Capture app_data_dir for the storage layer (note-centric paths) —
+            // must run before any artifact path is resolved.
+            storage::init(app_data_dir.clone());
             let db_path = app_data_dir.join("echo.db");
 
             // Wipe leftover input-test temp files. They're session-scoped and
@@ -143,6 +147,7 @@ pub fn run() {
             commands::notes::get_note,
             commands::notes::update_note,
             commands::notes::delete_note,
+            commands::notes::note_folder_path,
             commands::recordings::list_recordings,
             commands::recordings::list_pending_recordings,
             commands::recordings::list_archived_recordings,

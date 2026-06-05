@@ -91,6 +91,10 @@ pub async fn create(pool: &SqlitePool, input: CreateNoteInput) -> Result<Note> {
         .map(String::from)
         .unwrap_or_else(|| "auto".to_string());
 
+    // Note-centric storage — create the note's folder eagerly (id-derived name)
+    // so "open folder" works even before any artifact is written.
+    let _ = std::fs::create_dir_all(crate::storage::note_abs_dir(&id));
+
     sqlx::query(
         "INSERT INTO notes (id, title, description, location, language, started_at, note_type) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",

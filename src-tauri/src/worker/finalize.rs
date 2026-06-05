@@ -56,18 +56,19 @@ async fn run(app: AppHandle, recording_id: String) -> Result<()> {
         return Ok(());
     }
 
-    let chunk_dir = chunk_dir_for(&app, &rec.note_id, &recording_id)?;
+    let chunk_dir = crate::storage::resolve(&crate::storage::recording_chunks_rel(
+        &rec.note_id,
+        &recording_id,
+    ));
     let chunks = list_sorted_chunks(&chunk_dir).await?;
     if chunks.is_empty() {
         recordings_repo::mark_failed(&pool, &recording_id).await?;
         return Err(Error::Other("no chunks present".into()));
     }
 
-    let recording_dir = chunk_dir
-        .parent()
-        .ok_or_else(|| Error::Other("chunk_dir parent missing".into()))?;
     let output_filename = format!("{}.webm", recording_id);
-    let output_path = recording_dir.join(&output_filename);
+    let rel_path = crate::storage::recording_webm_rel(&rec.note_id, &recording_id);
+    let output_path = crate::storage::resolve(&rel_path);
 
     // ffmpeg required to concat WAV chunks → Opus/WebM. Absent → fail but keep
     // chunks on disk (G-REC-011) so the user can install ffmpeg and retry.
@@ -87,12 +88,11 @@ async fn run(app: AppHandle, recording_id: String) -> Result<()> {
     let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
 
     // DB transition. Probe duration (best-effort — None if ffprobe absent).
-    let file_path_str = output_path.to_string_lossy().to_string();
     let duration = ffmpeg::probe_duration(&output_path).await;
     recordings_repo::mark_finalized(
         &pool,
         &recording_id,
-        &file_path_str,
+        &rel_path,
         &output_filename,
         "webm",
         duration,
@@ -142,14 +142,3 @@ async fn list_sorted_chunks(chunk_dir: &PathBuf) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn chunk_dir_for(app: &AppHandle, note_id: &str, recording_id: &str) -> Result<PathBuf> {
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir resolve failed: {e}")))?;
-    Ok(base
-        .join("recordings")
-        .join(note_id)
-        .join(recording_id)
-        .join("chunks"))
-}

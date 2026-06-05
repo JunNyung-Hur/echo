@@ -123,7 +123,7 @@ async fn write_note_handler(app: &AppHandle, pool: &DbPool, note_id: &str, args:
 async fn recording_path(pool: &DbPool, note_id: &str) -> Value {
     match recordings::list_for_note(pool, note_id).await {
         Ok(recs) => match recs.into_iter().find(|r| r.format == "webm") {
-            Some(r) => json!({ "ok": true, "file_path": r.file_path }),
+            Some(r) => json!({ "ok": true, "file_path": crate::storage::resolve(&r.file_path).to_string_lossy().to_string() }),
             None => json!({ "ok": false, "error": "다운로드할 녹음 파일이 없습니다." }),
         },
         Err(e) => json!({ "ok": false, "error": e.to_string() }),
@@ -142,7 +142,7 @@ async fn read_transcript(pool: &DbPool, note_id: &str) -> Value {
     let Some(path) = t.corrected_path.clone().or_else(|| t.raw_path.clone()) else {
         return json!({ "ok": false, "error": "전사록 파일 경로가 없습니다." });
     };
-    match tokio::fs::read_to_string(&path).await {
+    match tokio::fs::read_to_string(crate::storage::resolve(&path)).await {
         Ok(text) => {
             // 1f207ab — 1K preview only; the full text is fetched on demand by
             // the frontend TranscriptViewerModal via transcript_id. The fence

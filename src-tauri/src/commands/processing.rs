@@ -1,7 +1,7 @@
 //! Phase 2 processing commands — transcript/body status for stage derivation,
 //! note-body content read, and transcribe retry (F-TRANS-005 / F-STAGE-003).
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -30,7 +30,7 @@ pub async fn get_transcript_content(
         .corrected_path
         .or(t.raw_path)
         .ok_or_else(|| Error::Other("전사록 파일 경로가 없습니다.".into()))?;
-    Ok(tokio::fs::read_to_string(&path).await?)
+    Ok(tokio::fs::read_to_string(crate::storage::resolve(&path)).await?)
 }
 
 #[tauri::command]
@@ -65,7 +65,9 @@ pub async fn get_body_content(
 ) -> Result<Option<String>> {
     let body = note_bodies::get(&state.db, &body_id).await?;
     match body.content_path {
-        Some(p) if !p.is_empty() => Ok(tokio::fs::read_to_string(&p).await.ok()),
+        Some(p) if !p.is_empty() => {
+            Ok(tokio::fs::read_to_string(crate::storage::resolve(&p)).await.ok())
+        }
         _ => Ok(None),
     }
 }
@@ -77,7 +79,6 @@ pub async fn get_body_content(
 /// rolled back; only the body content.
 #[tauri::command]
 pub async fn restore_note_body(
-    app: AppHandle,
     state: State<'_, AppState>,
     note_id: String,
     body_id: String,
@@ -88,7 +89,7 @@ pub async fn restore_note_body(
         .content_path
         .clone()
         .ok_or_else(|| Error::Other("선택한 버전에 본문이 없습니다.".into()))?;
-    let html = tokio::fs::read_to_string(&target_path).await?;
+    let html = tokio::fs::read_to_string(crate::storage::resolve(&target_path)).await?;
 
     // New row's context_snapshot + initial baseline come from the *current*
     // active (context isn't rolled back); fall back to the target if no active.
@@ -106,25 +107,19 @@ pub async fn restore_note_body(
     let transcript_id = src.transcript_id.clone();
 
     let new_id = Uuid::new_v4().to_string();
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir: {e}")))?
-        .join("note_bodies")
-        .join(&new_id)
-        .join("content.html");
+    let content_rel = crate::storage::body_rel(&note_id, &new_id);
+    let path = crate::storage::resolve(&content_rel);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
     tokio::fs::write(&path, html.as_bytes()).await?;
-    let path_str = path.to_string_lossy().to_string();
 
     note_bodies::archive_and_create_completed(
         &pool,
         &new_id,
         &note_id,
         transcript_id.as_deref(),
-        &path_str,
+        &content_rel,
         &context_snapshot,
         initial_content.as_deref(),
         initial_ctx.as_deref(),
@@ -139,7 +134,6 @@ pub async fn restore_note_body(
 /// is_manual_edit (so the version history shows a "직접 수정" badge).
 #[tauri::command]
 pub async fn save_manual_body_edit(
-    app: AppHandle,
     state: State<'_, AppState>,
     note_id: String,
     html: String,
@@ -164,25 +158,19 @@ pub async fn save_manual_body_edit(
     };
 
     let new_id = Uuid::new_v4().to_string();
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir: {e}")))?
-        .join("note_bodies")
-        .join(&new_id)
-        .join("content.html");
+    let content_rel = crate::storage::body_rel(&note_id, &new_id);
+    let path = crate::storage::resolve(&content_rel);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
     tokio::fs::write(&path, html.as_bytes()).await?;
-    let path_str = path.to_string_lossy().to_string();
 
     note_bodies::archive_and_create_completed(
         &pool,
         &new_id,
         &note_id,
         active.as_ref().and_then(|a| a.transcript_id.as_deref()),
-        &path_str,
+        &content_rel,
         &context_snapshot,
         initial_content.as_deref(),
         initial_ctx.as_deref(),

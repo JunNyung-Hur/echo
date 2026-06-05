@@ -199,7 +199,8 @@ async fn run(
         .await?
         .ok_or_else(|| Error::Other("활성 LLM endpoint가 없습니다. 설정에서 등록하세요.".into()))?;
 
-    let transcript_text = tokio::fs::read_to_string(&transcript_path).await?;
+    let transcript_text =
+        tokio::fs::read_to_string(crate::storage::resolve(&transcript_path)).await?;
     let meeting_info = build_meeting_info(&note);
 
     // e3d01f5 — 노트 출력 언어 = ui_lang(설정). 전사 언어와 달라도 이 언어로 작성(번역).
@@ -225,19 +226,15 @@ async fn run(
     }
 
     // Persist content + complete (G-TASK-007 initial capture handled in repo).
-    let content_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir: {e}")))?
-        .join("note_bodies")
-        .join(&body_id)
-        .join("content.html");
+    // Note-centric storage — body lives under the note's folder; store the
+    // app_data-relative path.
+    let content_rel = crate::storage::body_rel(&body.note_id, &body_id);
+    let content_path = crate::storage::resolve(&content_rel);
     if let Some(parent) = content_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
     tokio::fs::write(&content_path, minutes_html.as_bytes()).await?;
-    let content_path_str = content_path.to_string_lossy().to_string();
-    note_bodies::set_content_and_complete(&pool, &body_id, &content_path_str).await?;
+    note_bodies::set_content_and_complete(&pool, &body_id, &content_rel).await?;
     // 제목=본문 첫 줄 (freeform write_note와 동일 규칙). minutes도 생성된 본문에서 제목을 도출해
     // notes.title을 갱신한다 — 안 하면 "(제목 없음)" 기본값이 그대로 남는다.
     let _ = notes::update(

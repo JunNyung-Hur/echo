@@ -156,7 +156,7 @@ async fn transcribe_and_wait(
             "completed" => {
                 let path = cur.corrected_path.or(cur.raw_path);
                 return Ok(match path {
-                    Some(p) => tokio::fs::read_to_string(&p).await.ok(),
+                    Some(p) => tokio::fs::read_to_string(crate::storage::resolve(&p)).await.ok(),
                     None => None,
                 });
             }
@@ -231,7 +231,7 @@ async fn run_inner(
         .find(|b| b.archived == 0 && b.status == "completed")
     {
         Some(b) => match &b.content_path {
-            Some(p) => tokio::fs::read_to_string(p)
+            Some(p) => tokio::fs::read_to_string(crate::storage::resolve(p))
                 .await
                 .ok()
                 .map(|h| refine::split_body_style(&h).0),

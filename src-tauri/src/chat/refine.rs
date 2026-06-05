@@ -4,7 +4,7 @@
 
 #![allow(dead_code)] // Phase 3: invoked by the refine_minutes tool handler.
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::ai;
@@ -120,7 +120,7 @@ fn updated_context_fields(note: &Note, snapshot_json: &str) -> Vec<(String, Stri
 async fn read_transcript_text(pool: &DbPool, transcript_id: &str) -> Option<String> {
     let t = transcripts::get(pool, transcript_id).await.ok()?;
     let path = t.corrected_path.or(t.raw_path)?;
-    tokio::fs::read_to_string(&path).await.ok()
+    tokio::fs::read_to_string(crate::storage::resolve(&path)).await.ok()
 }
 
 /// Refine the active body per the user's natural-language request, producing a
@@ -128,7 +128,7 @@ async fn read_transcript_text(pool: &DbPool, transcript_id: &str) -> Option<Stri
 /// awaits it). On no active body / no LLM endpoint, returns an Err the agent
 /// surfaces to the user.
 pub async fn run_refine(
-    app: &AppHandle,
+    _app: &AppHandle,
     pool: &DbPool,
     note_id: &str,
     user_request: &str,
@@ -140,7 +140,7 @@ pub async fn run_refine(
         .content_path
         .clone()
         .ok_or_else(|| Error::Other("노트 본문 파일 경로가 없습니다.".into()))?;
-    let current_html = tokio::fs::read_to_string(&content_path).await?;
+    let current_html = tokio::fs::read_to_string(crate::storage::resolve(&content_path)).await?;
 
     let llm = ai_endpoints::get_active(pool, "llm")
         .await?
@@ -174,20 +174,15 @@ pub async fn run_refine(
     // G-REFINE-002 — re-splice style if the model dropped it.
     html = ensure_style_block(&html, &style);
 
-    // Persist the new version + archive the old one (G-REFINE-003).
+    // Persist the new version + archive the old one (G-REFINE-003). Note-centric
+    // storage — body under the note's folder, stored app_data-relative.
     let new_id = Uuid::new_v4().to_string();
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir: {e}")))?
-        .join("note_bodies")
-        .join(&new_id)
-        .join("content.html");
+    let path_str = crate::storage::body_rel(note_id, &new_id);
+    let path = crate::storage::resolve(&path_str);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
     tokio::fs::write(&path, html.as_bytes()).await?;
-    let path_str = path.to_string_lossy().to_string();
 
     // G-VERSION-004 — carry the stage-1 baseline forward across versions.
     let initial_content = active
@@ -267,7 +262,7 @@ pub(crate) fn extract_title(html: &str) -> String {
 }
 
 pub async fn run_write(
-    app: &AppHandle,
+    _app: &AppHandle,
     pool: &DbPool,
     note_id: &str,
     user_request: &str,
@@ -282,7 +277,9 @@ pub async fn run_write(
     // 기존 본문(있으면)을 읽어 이어쓰기 context로.
     let current_html = match &active {
         Some(b) => match &b.content_path {
-            Some(p) => tokio::fs::read_to_string(p).await.unwrap_or_default(),
+            Some(p) => tokio::fs::read_to_string(crate::storage::resolve(p))
+                .await
+                .unwrap_or_default(),
             None => String::new(),
         },
         None => String::new(),
@@ -318,43 +315,26 @@ pub async fn run_write(
         return Err(Error::Other("LLM이 빈 본문을 반환했습니다.".into()));
     }
 
-    persist_body(app, pool, note_id, &note, &active, &html).await
+    persist_body(pool, note_id, &note, &active, &html).await
 }
 
 /// 새 본문 HTML을 파일로 저장하고, 제목 동기화 + 버전 누적(archive→complete)까지 한다.
 /// run_write와 map-reduce(run_attachment_merge)가 공유한다. 새 body id 반환.
 async fn persist_body(
-    app: &AppHandle,
     pool: &DbPool,
     note_id: &str,
     note: &Note,
     active: &Option<NoteBody>,
     html: &str,
 ) -> Result<String> {
+    // Note-centric storage — body under the note's folder, stored app_data-relative.
     let new_id = Uuid::new_v4().to_string();
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir: {e}")))?
-        .join("note_bodies")
-        .join(&new_id)
-        .join("content.html");
+    let path_str = crate::storage::body_rel(note_id, &new_id);
+    let path = crate::storage::resolve(&path_str);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
     tokio::fs::write(&path, html.as_bytes()).await?;
-    let path_str = path.to_string_lossy().to_string();
-
-    // 본문 첫 줄을 노트 제목으로 동기화 — 제목은 본문에서 도출(read-only 메타).
-    let _ = notes::update(
-        pool,
-        note_id,
-        notes::UpdateNoteInput {
-            title: Some(extract_title(html)),
-            ..Default::default()
-        },
-    )
-    .await;
 
     let ctx = crate::worker::generate::context_snapshot_json(note);
 
@@ -382,6 +362,19 @@ async fn persist_body(
         false,
     )
     .await?;
+
+    // 본문 첫 줄을 노트 제목으로 동기화 — 제목은 본문에서 도출(read-only 메타).
+    // archive 이후에 실행한다: 제목 변경이 폴더 리네임을 유발하면 방금 insert된
+    // 본문 행의 경로 prefix까지 rewrite_paths가 함께 갱신해 일관성이 유지된다.
+    let _ = notes::update(
+        pool,
+        note_id,
+        notes::UpdateNoteInput {
+            title: Some(extract_title(html)),
+            ..Default::default()
+        },
+    )
+    .await;
 
     Ok(new_id)
 }
@@ -411,7 +404,9 @@ pub async fn run_map_reduce(
     let active = note_bodies::get_active(pool, note_id).await?;
     let current_html = match &active {
         Some(b) => match &b.content_path {
-            Some(p) => tokio::fs::read_to_string(p).await.unwrap_or_default(),
+            Some(p) => tokio::fs::read_to_string(crate::storage::resolve(p))
+                .await
+                .unwrap_or_default(),
             None => String::new(),
         },
         None => String::new(),
@@ -468,5 +463,5 @@ pub async fn run_map_reduce(
         return Err(Error::Other("통합 결과가 비어 있습니다.".into()));
     }
 
-    persist_body(app, pool, note_id, &note, &active, &merged.content).await
+    persist_body(pool, note_id, &note, &active, &merged.content).await
 }

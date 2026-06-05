@@ -6,7 +6,7 @@
 //! chat message on note create — F-NOTE-005).
 
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Manager, State};
+use tauri::State;
 use uuid::Uuid;
 
 use crate::error::Result;
@@ -58,7 +58,7 @@ pub async fn update_note(
 /// ids first, delete the rows, then best-effort remove the on-disk dirs so a
 /// deleted note doesn't leak webm / transcript / body files.
 #[tauri::command]
-pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<()> {
+pub async fn delete_note(state: State<'_, AppState>, id: String) -> Result<()> {
     let pool = state.db.clone();
 
     let transcripts = transcripts_repo::list_for_note(&pool, &id)
@@ -83,21 +83,23 @@ pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String)
         }
     }
 
-    let transcript_ids: Vec<String> = transcripts.iter().map(|t| t.id.clone()).collect();
-    let body_ids: Vec<String> = bodies.iter().map(|b| b.id.clone()).collect();
-
     notes_repo::delete(&pool, &id).await?;
 
-    if let Ok(base) = app.path().app_data_dir() {
-        let _ = tokio::fs::remove_dir_all(base.join("recordings").join(&id)).await;
-        for tid in transcript_ids {
-            let _ = tokio::fs::remove_dir_all(base.join("transcripts").join(&tid)).await;
-        }
-        for bid in body_ids {
-            let _ = tokio::fs::remove_dir_all(base.join("note_bodies").join(&bid)).await;
-        }
-    }
+    // Note-centric layout — a note's recordings/transcripts/bodies all live under
+    // one id-derived folder, so removing it cleans every artifact in one shot.
+    let _ = tokio::fs::remove_dir_all(crate::storage::note_abs_dir(&id)).await;
     Ok(())
+}
+
+/// Absolute path of a note's on-disk folder (`notes/<dir_name>/`) — the UI's
+/// "open folder" button opens this. Creates it if missing so the open never
+/// fails on a note that has no artifacts yet.
+#[tauri::command]
+pub async fn note_folder_path(state: State<'_, AppState>, id: String) -> Result<String> {
+    let _ = notes_repo::get(&state.db, &id).await?; // 404 on an unknown id
+    let dir = crate::storage::note_abs_dir(&id);
+    let _ = std::fs::create_dir_all(&dir);
+    Ok(dir.to_string_lossy().to_string())
 }
 
 /// F-NOTE-005 — drop one assistant row into the chat so the panel is never

@@ -8,11 +8,11 @@
 //! - delete_recording: stop any live capture, remove DB row + chunk dir.
 //!
 //! Chunk file layout (G-REC-001):
-//!   <app_data_dir>/recordings/<note_id>/<recording_id>/chunks/<seq:06d>.wav
+//!   <app_data_dir>/notes/<dir_name>/recordings/<recording_id>/chunks/<seq:06d>.wav
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::fs;
 
 use crate::audio_capture;
@@ -70,7 +70,7 @@ pub async fn read_recording_audio(
     if rec.file_path.is_empty() {
         return Err(Error::Other("녹음이 아직 준비되지 않았어요.".into()));
     }
-    let bytes = fs::read(&rec.file_path)
+    let bytes = fs::read(crate::storage::resolve(&rec.file_path))
         .await
         .map_err(|e| Error::Other(format!("녹음 파일을 읽을 수 없어요: {e}")))?;
     Ok(tauri::ipc::Response::new(bytes))
@@ -102,7 +102,7 @@ pub async fn start_recording(
     )
     .await?;
 
-    let chunk_dir = chunk_dir_for(&app, &note_id, &recording.id)?;
+    let chunk_dir = chunk_dir_for(&note_id, &recording.id);
     fs::create_dir_all(&chunk_dir).await?;
 
     // on_flush runs on the capture thread every 5s — touch last_chunk_at
@@ -206,18 +206,18 @@ pub async fn import_audio_file(
     )
     .await?;
 
-    let output = recording_file_for(&app, &note_id, &recording.id)?;
+    let rel_path = crate::storage::recording_webm_rel(&note_id, &recording.id);
+    let output = crate::storage::resolve(&rel_path);
     if let Err(e) = crate::ffmpeg::convert_to_webm(&src, &output).await {
         let _ = recordings_repo::delete(&pool, &recording.id).await;
         return Err(e);
     }
 
-    let path_str = output.to_string_lossy().to_string();
     let duration = crate::ffmpeg::probe_duration(&output).await;
     recordings_repo::mark_finalized(
         &pool,
         &recording.id,
-        &path_str,
+        &rel_path,
         &original_filename,
         "webm",
         duration,
@@ -257,7 +257,6 @@ pub async fn import_audio_file(
 /// Delete a recording: stop any live capture, then remove DB row + chunk dir.
 #[tauri::command]
 pub async fn delete_recording(
-    app: AppHandle,
     state: State<'_, AppState>,
     recording_id: String,
 ) -> Result<()> {
@@ -272,12 +271,12 @@ pub async fn delete_recording(
     }
 
     let rec = recordings_repo::get(&state.db, &recording_id).await?;
-    let dir = chunk_dir_for(&app, &rec.note_id, &recording_id)?
-        .parent()
-        .ok_or_else(|| Error::Other("recording dir resolution failed".into()))?
-        .to_path_buf();
-    if dir.exists() {
-        fs::remove_dir_all(&dir).await.ok();
+    // Remove the finalized webm + any leftover capture chunks for this recording.
+    let webm = crate::storage::resolve(&crate::storage::recording_webm_rel(&rec.note_id, &recording_id));
+    let _ = fs::remove_file(&webm).await;
+    let chunks = chunk_dir_for(&rec.note_id, &recording_id);
+    if chunks.exists() {
+        fs::remove_dir_all(&chunks).await.ok();
     }
     recordings_repo::delete(&state.db, &recording_id).await?;
     Ok(())
@@ -287,29 +286,7 @@ pub async fn delete_recording(
 // helpers
 // ============================================================================
 
-fn chunk_dir_for(app: &AppHandle, note_id: &str, recording_id: &str) -> Result<PathBuf> {
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir resolve failed: {e}")))?;
-    Ok(base
-        .join("recordings")
-        .join(note_id)
-        .join(recording_id)
-        .join("chunks"))
-}
-
-/// Final webm path for an imported recording — same layout cpal-finalize uses
-/// (`recordings/<note_id>/<rec_id>/<rec_id>.webm`) so delete-note file cleanup
-/// and the transcribe worker find it identically.
-fn recording_file_for(app: &AppHandle, note_id: &str, recording_id: &str) -> Result<PathBuf> {
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir resolve failed: {e}")))?;
-    Ok(base
-        .join("recordings")
-        .join(note_id)
-        .join(recording_id)
-        .join(format!("{recording_id}.webm")))
+/// Live-capture chunk dir (`notes/note-<id8>/recordings/<rec_id>.chunks/`).
+fn chunk_dir_for(note_id: &str, recording_id: &str) -> PathBuf {
+    crate::storage::resolve(&crate::storage::recording_chunks_rel(note_id, recording_id))
 }

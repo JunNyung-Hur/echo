@@ -174,20 +174,12 @@ async fn run(
     let chunk_seconds = asr_ep.chunk_seconds.unwrap_or(300).max(1) as u32;
     let max_tokens = asr_ep.max_tokens.unwrap_or(4096);
 
-    // ffmpeg: webm → 16kHz mono WAV chunks.
-    let work_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::Other(format!("app_data_dir: {e}")))?
-        .join("transcripts")
-        .join(&transcript_id);
-    let chunk_dir = work_dir.join("chunks");
-    let chunks = asr::split_to_wav_chunks(
-        std::path::Path::new(&rec.file_path),
-        &chunk_dir,
-        chunk_seconds,
-    )
-    .await?;
+    // ffmpeg: webm → 16kHz mono WAV chunks. Flat note-centric storage; the DB
+    // stores app_data-relative paths.
+    let chunk_dir =
+        crate::storage::resolve(&crate::storage::transcript_chunks_rel(&t.note_id, &transcript_id));
+    let rec_path = crate::storage::resolve(&rec.file_path);
+    let chunks = asr::split_to_wav_chunks(&rec_path, &chunk_dir, chunk_seconds).await?;
     if chunks.is_empty() {
         return Err(Error::Other("no audio chunks produced".into()));
     }
@@ -252,12 +244,16 @@ async fn run(
         ));
     }
 
-    // Persist transcript text + complete.
-    let raw_path = work_dir.join("raw.txt");
-    tokio::fs::write(&raw_path, full.as_bytes()).await?;
-    let raw_path_str = raw_path.to_string_lossy().to_string();
-    transcripts::set_paths_and_complete(&pool, &transcript_id, &raw_path_str, Some(&raw_path_str))
-        .await?;
+    // Persist transcript text + complete; store the app_data-relative path, then
+    // drop the transient wav chunks.
+    let text_rel = crate::storage::transcript_text_rel(&t.note_id, &transcript_id);
+    let text_abs = crate::storage::resolve(&text_rel);
+    if let Some(parent) = text_abs.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&text_abs, full.as_bytes()).await?;
+    transcripts::set_paths_and_complete(&pool, &transcript_id, &text_rel, Some(&text_rel)).await?;
+    let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
     tracing::info!(%transcript_id, chunks = total, chars = full.len(), "transcribe: completed");
     let _ = timeline::post(
         &pool,
@@ -280,7 +276,7 @@ async fn run(
     // 가 전사 텍스트를 run_write로 노트에 종합한다.
     if note.note_type.as_deref() != Some("freeform") {
         if let Err(e) =
-            crate::worker::generate::dispatch(&app, &pool, &t.note_id, &transcript_id, &raw_path_str)
+            crate::worker::generate::dispatch(&app, &pool, &t.note_id, &transcript_id, &text_rel)
                 .await
         {
             tracing::warn!(?e, note_id = %t.note_id, "failed to auto-dispatch generate");
