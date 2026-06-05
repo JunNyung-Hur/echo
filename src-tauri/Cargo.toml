@@ -1,6 +1,6 @@
 [package]
 name = "echo-app"
-version = "0.0.1"
+version = "0.0.2"
 description = "echo — Personal Second Brain"
 authors = ["JunNyung-Hur"]
 edition = "2021"
