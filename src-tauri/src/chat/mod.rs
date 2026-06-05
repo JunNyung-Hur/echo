@@ -10,6 +10,7 @@
 
 pub mod agent;
 pub mod exec;
+pub mod intent;
 pub mod prompt;
 pub mod refine;
 pub mod tools;

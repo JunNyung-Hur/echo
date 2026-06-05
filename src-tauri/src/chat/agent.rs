@@ -15,7 +15,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::ai;
-use crate::chat::{exec, prompt, refine, tools};
+use crate::chat::{exec, intent, prompt, refine, tools};
 use crate::db::DbPool;
 use crate::error::{Error, Result};
 use crate::models::ChatMessage;
@@ -59,6 +59,9 @@ pub async fn run_agent(
 
     let result = if is_attach {
         run_attachment_turn(app, pool, note_id, user_message, &recording_ids).await
+    } else if note_type.as_deref() == Some("freeform") {
+        // freeform 텍스트 턴은 의도 스테이지로 라우팅(인사·잡담·질문 vs 노트 콘텐츠).
+        run_freeform_text(app, pool, note_id, user_message, &history).await
     } else {
         run_inner(app, pool, note_id, user_message, user_state, &history).await
     };
@@ -207,6 +210,68 @@ fn count_en_words(s: &str) -> usize {
         count += 1;
     }
     count
+}
+
+/// freeform 텍스트 턴: 의도 분류(intent stage) → content/edit이면 refine::run_write로
+/// 노트에 반영, social/smalltalk/question이면 대화로만 응대한다. 무거운 본문 쓰기는
+/// 종전과 동일하게 run_write가 담당하고, 여기서는 "무엇을 원하는가"만 가른다.
+async fn run_freeform_text(
+    app: &AppHandle,
+    pool: &DbPool,
+    note_id: &str,
+    user_message: &str,
+    history: &[ChatMessage],
+) -> Result<()> {
+    let llm = ai_endpoints::get_active(pool, "llm")
+        .await?
+        .ok_or_else(|| Error::Other("활성 LLM endpoint가 없습니다. 설정에서 등록하세요.".into()))?;
+
+    // 현재 노트 본문(스타일 제외) — question 응답 + edit 판단 근거.
+    let active = note_bodies::get_active(pool, note_id).await?;
+    let body_text: Option<String> = match &active {
+        Some(b) => match &b.content_path {
+            Some(p) => tokio::fs::read_to_string(crate::storage::resolve(p))
+                .await
+                .ok()
+                .map(|h| refine::split_body_style(&h).0),
+            None => None,
+        },
+        None => None,
+    };
+
+    let ui_lang = crate::repo::settings::get(pool, "ui_lang").await.ok().flatten();
+    let response_lang = decide_response_lang(ui_lang.as_deref(), user_message);
+
+    let decision =
+        intent::classify(&llm, body_text.as_deref(), history, user_message, response_lang).await?;
+
+    let mut body_version: Option<String> = None;
+    if decision.writes() {
+        match refine::run_write(app, pool, note_id, user_message, decision.write_intent()).await {
+            Ok(bid) => body_version = Some(bid),
+            Err(e) => {
+                tracing::warn!(?e, %note_id, "freeform write failed");
+                let msg = format!("노트에 반영하지 못했어요: {e}");
+                let _ = app.emit("chat:delta", json!({ "note_id": note_id, "delta": msg }));
+                chat_repo::create(pool, note_id, "assistant", &msg, None, None).await?;
+                return Ok(());
+            }
+        }
+    }
+
+    let reply = if !decision.reply.trim().is_empty() {
+        decision.reply.clone()
+    } else if response_lang == "en" {
+        if body_version.is_some() { "Got it down." } else { "Go ahead." }.to_string()
+    } else if body_version.is_some() {
+        "적어뒀어요.".to_string()
+    } else {
+        "네, 말씀하세요.".to_string()
+    };
+
+    let _ = app.emit("chat:delta", json!({ "note_id": note_id, "delta": reply }));
+    chat_repo::create(pool, note_id, "assistant", &reply, None, body_version.as_deref()).await?;
+    Ok(())
 }
 
 async fn run_inner(
