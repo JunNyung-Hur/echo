@@ -16,6 +16,7 @@ import RecordingWidget from "@/components/RecordingWidget";
 import Spinner from "@/components/Spinner";
 import ChatPanel from "@/components/ChatPanel";
 import VersionHistory from "@/components/VersionHistory";
+import { TranscriptModal } from "@/components/TranscriptViewerModal";
 import FileUploader from "@/components/FileUploader";
 
 interface Progress {
@@ -770,6 +771,8 @@ function DonePanel({
   const [html, setHtml] = useState<string | null>(null);
   const [loadingBody, setLoadingBody] = useState(true);
   const [showVersions, setShowVersions] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [transcriptId, setTranscriptId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copiedType, setCopiedType] = useState<string | null>(null);
@@ -801,6 +804,24 @@ function DonePanel({
       alive = false;
     };
   }, [body]);
+
+  // minutes: load this note's completed transcript id so the 전사록 button can
+  // open the full-text modal. Reloads when the body changes (after generate).
+  useEffect(() => {
+    if (variant !== "minutes") return;
+    let alive = true;
+    processingApi
+      .listTranscripts(noteId)
+      .then((ts) => {
+        if (!alive) return;
+        const done = ts.find((x) => x.status === "completed");
+        setTranscriptId(done ? done.id : null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [noteId, variant, body]);
 
   // Close the copy menu on outside click. iframe clicks don't bubble to the
   // parent document, so also close on window blur (clicking into the body
@@ -981,6 +1002,16 @@ function DonePanel({
           </>
         ) : (
           <>
+            {variant === "minutes" && transcriptId && (
+              <button
+                onClick={() => setShowTranscript(true)}
+                className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-md px-2 py-1 bg-transparent border-0 cursor-pointer transition-colors"
+                title={t("detail.transcript")}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                {t("detail.transcript")}
+              </button>
+            )}
             <button
               onClick={() => setShowVersions(true)}
               className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-md px-2 py-1 bg-transparent border-0 cursor-pointer transition-colors"
@@ -1085,6 +1116,9 @@ function DonePanel({
             onRestored();
           }}
         />
+      )}
+      {showTranscript && transcriptId && (
+        <TranscriptModal transcriptId={transcriptId} onClose={() => setShowTranscript(false)} />
       )}
     </section>
   );

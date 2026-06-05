@@ -91,6 +91,7 @@ export const detail = {
   "detail.save": { ko: "저장", en: "Save" },
   "detail.saving": { ko: "저장 중…", en: "Saving…" },
   "detail.history": { ko: "변경 이력", en: "History" },
+  "detail.transcript": { ko: "전사록", en: "Transcript" },
   "detail.editManual": { ko: "직접 수정", en: "Edit manually" },
   "detail.edit": { ko: "수정", en: "Edit" },
   "detail.metaChanged.prefix": { ko: "본문 생성 이후 ", en: "After the body was generated, " },

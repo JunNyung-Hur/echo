@@ -9,7 +9,7 @@ interface TranscriptModalProps {
   onClose: () => void;
 }
 
-function TranscriptModal({ transcriptId, onClose }: TranscriptModalProps) {
+export function TranscriptModal({ transcriptId, onClose }: TranscriptModalProps) {
   const t = useT();
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
