@@ -20,6 +20,8 @@ export const recordingsApi = {
   listPending: (noteId: string) => invoke<Recording[]>("list_pending_recordings", { noteId }),
   /** Recordings already sent — the 보관함(archive) history. */
   listArchived: (noteId: string) => invoke<Recording[]>("list_archived_recordings", { noteId }),
+  /** Absolute path of the note's on-disk folder — for the "open folder" button. */
+  noteFolder: (noteId: string) => invoke<string>("note_folder_path", { id: noteId }),
   get: (id: string) => invoke<Recording>("get_recording", { id }),
   /** Raw audio bytes (ArrayBuffer) for in-app playback via a Blob URL. */
   readAudio: (id: string) => invoke<ArrayBuffer>("read_recording_audio", { id }),

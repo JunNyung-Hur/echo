@@ -15,9 +15,11 @@ import {
   Pause,
   Paperclip,
   Archive,
+  FolderOpen,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { toast } from "sonner";
 
@@ -153,10 +155,17 @@ export default function ChatPanel({
     processingApi.listTimeline(noteId).then(setTimeline).catch(() => {});
   }, [noteId]);
 
-  // 보관함(전송한 녹음) 로드 — 진입 시 + 전송 후 갱신.
+  // 파일 보관함 로드 — 진입 시 + 전송 후 갱신. freeform은 '전송한 녹음'(보관함),
+  // minutes는 그 노트의 정리된 녹음(meeting recording)을 동일한 보관함 UI로 보여준다.
   const loadArchived = useCallback(() => {
-    if (stage !== "freeform") return;
-    recordingsApi.listArchived(noteId).then(setArchived).catch(() => {});
+    if (stage === "freeform") {
+      recordingsApi.listArchived(noteId).then(setArchived).catch(() => {});
+    } else {
+      recordingsApi
+        .listForNote(noteId)
+        .then((recs) => setArchived(recs.filter((r) => r.format === "webm")))
+        .catch(() => {});
+    }
   }, [noteId, stage]);
 
   useEffect(() => {
@@ -585,7 +594,7 @@ export default function ChatPanel({
           <div className="text-base font-medium text-gray-900 leading-tight mb-1 truncate">{note.title}</div>
           <NoteTags noteId={note.id} />
         </div>
-        {stage === "freeform" && archived.length > 0 && (
+        {archived.length > 0 && (
           <div className="relative shrink-0">
             <button
               onClick={() => setShowArchive((v) => !v)}
@@ -599,8 +608,25 @@ export default function ChatPanel({
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowArchive(false)} />
                 <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-white border border-gray-200 rounded-xl shadow-lg p-2">
-                  <div className="px-2 py-1.5 text-xs font-medium text-gray-500">
-                    {t("chat.rec.archiveTitle")}
+                  <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                    <span className="text-xs font-medium text-gray-500">
+                      {t("chat.rec.archiveTitle")}
+                    </span>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const p = await recordingsApi.noteFolder(noteId);
+                          await openPath(p);
+                        } catch (e) {
+                          console.error("openFolder failed", e);
+                          toast.error(`폴더 열기 실패: ${e}`);
+                        }
+                      }}
+                      title={t("chat.rec.openFolder")}
+                      className="p-0.5 text-gray-400 hover:text-sky-600 hover:bg-gray-200 rounded cursor-pointer shrink-0"
+                    >
+                      <FolderOpen size={14} />
+                    </button>
                   </div>
                   <div className="max-h-64 overflow-y-auto space-y-1">
                     {archived.map((rec) => (

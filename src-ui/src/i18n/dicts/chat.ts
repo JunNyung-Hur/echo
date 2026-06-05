@@ -73,7 +73,8 @@ export const chat = {
   "chat.rec.upload": { ko: "파일 첨부", en: "Attach file" },
   "chat.rec.dropHint": { ko: "오디오 파일을 여기에 놓으세요", en: "Drop an audio file here" },
   "chat.rec.archive": { ko: "보관함", en: "Archive" },
-  "chat.rec.archiveTitle": { ko: "보낸 녹음", en: "Sent recordings" },
+  "chat.rec.archiveTitle": { ko: "파일 보관함", en: "File archive" },
+  "chat.rec.openFolder": { ko: "폴더 열기", en: "Open folder" },
   "chat.rec.delTitle": { ko: "녹음을 삭제할까요?", en: "Delete this recording?" },
   "chat.rec.delDesc": {
     ko: "이 녹음 파일이 완전히 삭제되고 되돌릴 수 없습니다. 삭제하시겠어요?",
