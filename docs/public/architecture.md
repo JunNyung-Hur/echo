@@ -73,11 +73,11 @@ erDiagram
 
 | Table | Role |
 |---|---|
-| `notes` | Note meta. `note_type` = `minutes` / `freeform` (chosen at creation). Title is derived from the body's first line. |
+| `notes` | Note meta. `note_type` = `minutes` / `freeform` (chosen at creation). `theme` is the note-style preset (freeform; minutes keep a fixed look). Title is derived from the body's first `#` heading / line. |
 | `recordings` | Recording file meta. `format` is a state machine (`recording`/`finalizing`/`webm`/…), `last_chunk_at` is a heartbeat. `consumed_at` marks a freeform attachment that's been sent; `chat_message_id` links it to the chat message that sent it (bubble chips). |
 | `transcripts` | ASR + post-processed output (raw/corrected). |
-| `note_bodies` | The organized note body (HTML on disk). `context_snapshot` (JSON) captures meta at generation time; `archived` keeps old versions (history); `is_manual_edit` flags hand edits. |
-| `note_chat_messages` | Left-side chat. Assistant rows carry `tool_calls` (JSON) and `note_body_version_id` (which version a turn produced). |
+| `note_bodies` | The organized note body (Markdown on disk; pre-v0.0.3 bodies are HTML and still render). `context_snapshot` (JSON) captures meta at generation time; `archived` keeps old versions (history); `is_manual_edit` flags hand edits; `refine_request` records the user request behind an agent edit. |
+| `note_chat_messages` | Left-side chat. Assistant rows carry order-preserving `parts` (JSON `[text/tool/ask]` blocks — the source for step cards and history replay), legacy `tool_calls`, and `note_body_version_id`. |
 | `note_timeline_events` | Lifecycle moments (record/transcribe/generate) shown as system pills in the chat. |
 | `tags` / `note_tags` | Hashtags + note M2M (name NOCASE unique, FK CASCADE). |
 | `ai_endpoints` / `settings` | LLM·ASR endpoint config, app settings (KV). |
@@ -100,7 +100,7 @@ sequenceDiagram
     W->>W: spawn transcribe
     W->>AI: ASR (chunked) + LLM post-process
     W->>W: spawn generate (minutes)
-    W->>AI: prompt + transcript + note context → HTML
+    W->>AI: prompt + transcript + note context → Markdown
     W->>Core: NoteBody persisted + emit note:updated
 ```
 
@@ -125,14 +125,17 @@ sequenceDiagram
 
 The existing note is one of the merge inputs, so its content is preserved; different topics are split into sections. (freeform transcription does **not** trigger minutes generation.)
 
-### 4.3 Chat agent (refinement)
+### 4.3 Chat agent (single-session, talker = doer)
 
-For text-only turns the agent runs a tool loop. Design points:
+Text turns run a single continuous tool loop — the agent *is* the editor, not a dispatcher. Design points:
 
-- **Tools**: `write_note` (freeform body), `refine_minutes` (minutes body), `read_transcript` (only on explicit request), `retry_transcribe`, `retry_failed_task`, `get_recording_download_url`. Tools are dynamically gated by stage and `user_state.available_actions` so the agent can't do what the screen can't.
-- **System prompt** (`src-tauri/src/chat/prompt.rs`) is a section registry + IF/THEN rules, refilled each request with note state and the user's visible state. Guards against paraphrasing, oversharing, and inventing tools.
+- **View → edit**: the note body is never inlined in the system prompt. The agent calls `read_minutes` for the current body, then `edit_minutes` applies **str_replace edits** (`{old, new, replace_all}`) with guards — unique match (whitespace-tolerant fallback), reject no-op / comment-only changes. Guard failures return as retryable tool errors, so the model naturally retries with a corrected snippet. Each successful edit becomes a new `note_bodies` version with a red/green diff shown in chat.
+- **Tools**: `read_minutes` / `edit_minutes` (minutes + freeform edits), `write_note` (freeform dictation / tidy / restructure), `set_theme` (freeform note style), `ask_user`, `read_transcript` (only on explicit request), `retry_transcribe`, `retry_failed_task`, `get_recording_download_url`. Gated by stage and `user_state.available_actions` so the agent can't do what the screen can't.
+- **`ask_user` hard-stops the turn**: when a choice is genuinely ambiguous (or destructive, like re-transcribe) the agent asks with option buttons and the loop ends — structurally preventing ask-then-answer-yourself behavior.
+- **Parts model**: one user send = one assistant row whose `parts` array preserves the real order of text / tool calls / questions. History is serialized back in that order (a completion report never precedes its tool call), and stale tool results are pruned (only the last `read_minutes` keeps its body).
+- **System prompt** (`src-tauri/src/chat/prompt.rs`) is a section registry + IF/THEN rules plus honesty/turn rules (no pre-call narration, no claiming unfinished work), refilled each request with note state and the user's visible state.
 - **Output language** is decided from the `ui_lang` setting + the message's script, and pinned at the top of the prompt.
-- **Long-running tools** (`refine_minutes`, `retry_*`) run only on an explicit instruction; status questions get a one-line suggestion instead.
+- **Long-running tools** (`retry_*`) run only on an explicit instruction; status questions get a one-line suggestion instead. A runaway LLM stream is cut off by a size backstop, and whole-body freeform rewrites are rejected if they would lose existing content.
 
 ---
 
@@ -169,9 +172,9 @@ npx tauri build --config src-tauri/tauri.release.conf.json
 ## 7. Invariants worth knowing
 
 1. **Domain term is "note"** — meeting→note, minutes→note_body. Kept consistent across prompt and UI.
-2. **Minutes generation is not auto-re-triggered** — protects hand edits and accumulated effects; changes go through refinement.
+2. **Minutes generation is not auto-re-triggered** — protects hand edits and accumulated effects; changes go through in-place agent edits (str_replace), never whole-body regeneration.
 3. **Transcript is immutable** — nothing but transcribe mutates a transcript.
 4. **Single-commit task dispatch** — task_id + a `processing` row + spawn are one transaction to avoid races (G-TASK-001).
-5. **One chat turn = one row** — tool_calls + note_body_version_id ride the natural-language reply row so "Open this version" lands correctly.
+5. **One user send = one assistant row** — the `parts` array carries the ordered text/tool/ask blocks; history replay preserves that order so the model never learns to report before calling.
 6. **Timeline is a separate table** — merged chronologically into the chat by the frontend.
 7. **Existing content is preserved on freeform merge** — the prior note body is a merge input, never overwritten wholesale.

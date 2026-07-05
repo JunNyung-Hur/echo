@@ -63,23 +63,26 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 
 ### 2.7 Note organizing
 
-- [MVP] Minutes: automatic structured write-up after transcription (HTML). Adapts to the input (decisions/actions for a meeting, organized info for a lecture, a tight summary for a monologue); length scales to the content.
+- [MVP] Minutes: automatic structured write-up after transcription (Markdown; pre-v0.0.3 HTML bodies still render). Adapts to the input (decisions/actions for a meeting, organized info for a lecture, a tight summary for a monologue); length scales to the content.
 - [MVP] Minutes generation runs once automatically — no auto-re-trigger.
-- [MVP] Freeform: attachments are organized into the note via map-reduce with the existing note as one of the inputs; the body's first line is an `<h1>` title that spans all topics.
+- [MVP] Freeform: attachments are organized into the note via map-reduce with the existing note as one of the inputs; the body's first line is a `#` title that spans all topics. A whole-body rewrite that would lose existing content is rejected (content-loss guard).
+- [MVP] Freeform notes render through a selectable **note style** preset (Minimal/Notepad/Report/Colorful; default set in Settings/first-run); minutes keep a fixed look.
 - [MVP] Generation-time meta is captured in `note_bodies.context_snapshot` (NOT NULL).
 
 ### 2.8 Chat agent
 
-- [MVP] Natural-language requests in the left chat panel.
-- [MVP] Tools: `write_note` (freeform), `refine_minutes` (minutes), recording download, transcribe retry, failed-task retry, transcript read (explicit request only).
-- [MVP] The active note body is inlined into the prompt — content questions answered without a tool.
+- [MVP] Natural-language requests in the left chat panel; a single continuous tool loop (talker = doer).
+- [MVP] Tools: `read_minutes` + `edit_minutes` (str_replace in-place edits, minutes + freeform), `write_note` (freeform dictation/tidy/restructure), `set_theme` (freeform note style), `ask_user`, recording download, transcribe retry, failed-task retry, transcript read (explicit request only).
+- [MVP] The body is **not** inlined into the prompt — the agent reads it with `read_minutes` (view→edit), so edits always target the current version.
+- [MVP] `edit_minutes` guards: unique match (whitespace-tolerant fallback), replace_all for terminology sweeps, reject no-op/comment-only; guard failures return as retryable errors the model corrects.
+- [MVP] `ask_user` hard-stops the turn with choice buttons; destructive actions (re-transcribe) require a confirmed answer first.
 - [MVP] Tools are dynamically gated by stage/capability — no exposing actions the screen can't do.
 - [MVP] Long-running tools run only on explicit instruction; ambiguous/status questions get a one-line suggestion.
-- [MVP] Responses stream; progress is shown during a running tool.
-- [MVP] A new body version adds an *Open this version* button beside the reply.
-- [MVP] Correction-style input ("Sungkyunkwan") is silently substituted, not turned into a topic.
-- [MVP] Hand edits survive later refinements.
-- [MVP] LLM failure shows an inline red notice that clears on the next send.
+- [MVP] Responses stream; each tool call renders as a live step card (running → done, expandable red/green diff for edits); the pending indicator survives leaving/re-entering the note.
+- [MVP] One user send persists as one assistant row with order-preserving `[text/tool/ask]` parts; history replays that order.
+- [MVP] Correction-style input ("Sungkyunkwan") is substituted in place — the wrong form (present in the body) is `old`, the user's correct form is `new`; phrase deletion removes only the phrase, never its whole line.
+- [MVP] Hand edits survive later agent edits.
+- [MVP] LLM failure shows an inline red notice that clears on the next send; runaway responses are cut off by a size backstop.
 - [MVP] Output language decided from `ui_lang` + the message script.
 
 ### 2.9 Lifecycle system messages
@@ -122,13 +125,13 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 - Navigating away mid-recording or minimizing to the tray is safe.
 - Tasks dispatch as a single transaction (task_id + `processing` row + spawn) to avoid races (G-TASK-001).
 - `note_bodies.context_snapshot` is NOT NULL.
-- A chat turn persists reply + tool_calls + note_body_version_id as one row.
+- One user send persists as one assistant row with ordered `[text/tool/ask]` parts (+ legacy tool_calls, note_body_version_id).
 - Failover/exception/recovery guards for long-running tasks are preserved (G-CANCEL, G-REC, …).
 
 ### 3.3 Performance & cost
 
 - Transcription/organizing run in the background — continue across navigation and tray.
-- Refinement and minutes generation are explicit-only → LLM cost control.
+- Agent edits and minutes generation are explicit-only → LLM cost control.
 - List search/filter/`has_active_task`/per-note tags are server-side, one fetch per page (no N+1).
 
 ---
@@ -137,21 +140,21 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 
 | Integration | Requirement |
 |---|---|
-| LLM API | OpenAI-compatible. Used for post-processing, organizing, refinement, chat, and freeform map-reduce. |
+| LLM API | OpenAI-compatible. Used for post-processing, organizing, in-place edits, chat, and freeform map-reduce. |
 | ASR API | OpenAI-compatible. Chunked calls. `transcriptions` (multipart) or audio_url style. |
 
 ---
 
 ## 5. Verification checklist
 
-- [ ] First-run setup (language → models) works
+- [ ] First-run setup (language → models → note style) works
 - [ ] Create both note types; type is fixed and shown by icon
-- [ ] Minutes: record/import → transcribe → generate → refine → delete
+- [ ] Minutes: record/import → transcribe → generate → chat edit (read→edit, diff card) → delete
 - [ ] Freeform: chat write; attach record/file/drag (multiple) → send → map-reduce merge preserves existing body
-- [ ] Freeform: archive (replay/delete), unsent attachments restored on reopen
-- [ ] Title follows the body's first line (no separate meta editing)
-- [ ] Chat agent gates/calls tools per stage/capability; *Open this version* lands correctly
-- [ ] Lifecycle pills appear chronologically; hand edits survive refinement
+- [ ] Freeform: archive (replay/delete), unsent attachments restored on reopen; note style switch applies
+- [ ] Title follows the body's first `#` heading / line (no separate meta editing)
+- [ ] Chat agent gates/calls tools per stage/capability; step cards + edit diffs render; ask cards answerable
+- [ ] Lifecycle pills appear chronologically; hand edits survive agent edits
 - [ ] Correction requests substituted silently, not turned into topics
 - [ ] List search / `#tag` / date filter / pagination accurate server-side
 - [ ] Settings: input source test, OS volume, AI endpoints, language

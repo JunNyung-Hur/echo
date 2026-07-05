@@ -44,10 +44,12 @@ From capture to organized notes, the organizing is done by asking an AI agent li
 
 ### The AI agent
 
-- Restructure, summarize, change wording, switch the note's genre/design.
-- Correct mistaken words in place ("it's X', not X").
+- Restructure, summarize, change wording, or switch the note's genre — applied as precise in-place edits with a red/green diff you can inspect in chat.
+- Correct mistaken words in place ("it's X', not X"); remove just a phrase without losing the line it sits on.
+- Asks with choice buttons when something is genuinely ambiguous (or destructive, like re-transcribing) instead of guessing.
 - Retry a failed transcription or generation.
-- A one-line next-step suggestion after each action; progress shown in the chat for longer tasks.
+- Live step cards show what the agent is doing as it works; a one-line next-step suggestion follows each action.
+- Freeform notes have a selectable **note style** (Minimal / Notepad / Report / Colorful) — switch it from the note or just ask the agent.
 
 ### Tags & search
 

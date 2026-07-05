@@ -52,7 +52,7 @@ Yes. Hand edits are preserved through later refinements, and you can roll back t
 Make sure both an **ASR** and an **LLM** endpoint are registered in Settings — transcription and organizing need both.
 
 ### Q. Can the agent do "just remove the divider" inside the note?
-Yes. The agent handles in-body visual elements (dividers, bold, tables) and even genre switches as refinements.
+Yes. In-body elements (dividers, bold, tables) and genre switches are content edits, applied in place — expand the edit card in chat to see exactly what changed. Visual design is separate: freeform notes switch **note styles** (ask the agent or use the *Note style* button); minutes notes keep a fixed look.
 
 ### Q. I can't find an old note.
 Search by title/memo/location keywords, narrow by `#tag`, or scope by date with the *date* chip. `Ctrl+K` focuses the search bar.

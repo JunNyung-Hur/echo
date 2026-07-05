@@ -13,7 +13,8 @@ echo is a desktop app for capturing anything you think or hear — meetings, lec
 - **Two kinds of notes, shaped to whatever you capture**
   - **Minutes** — record a meeting/lecture → echo transcribes it and generates a structured write-up (decisions, action items, sections), sized to the content.
   - **Freeform** — a chat-first notepad. Jot text, or attach voice recordings / audio files right in the chat; echo transcribes each and merges them into your note, keeping what's already there.
-- **An AI agent beside the note** — fix the title, restructure, summarize, change the style, recover from a failed transcription — all by asking in plain language, no menu hunting. The agent knows where the note stands and suggests the next step.
+- **An AI agent beside the note** — fix the title, restructure, summarize, recover from a failed transcription — all by asking in plain language, no menu hunting. Changes land as precise in-place edits with a red/green diff you can inspect, the agent asks with choice buttons when something is genuinely ambiguous, and live step cards show what it's doing as it works.
+- **Notes that look the way you like** — freeform notes come in selectable styles (Minimal, Notepad, Report, Colorful); pick a default at first run or in Settings, switch per note anytime.
 - **Bring your own models** — connect any OpenAI-compatible LLM and ASR endpoint, cloud (OpenAI, etc.) or local (vLLM, …). echo ships no AI of its own.
 - **And more** — version history with rollback, `#tag` + text search, and a full Korean / English UI.
 
