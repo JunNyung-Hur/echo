@@ -247,27 +247,6 @@ pub async fn list(pool: &SqlitePool, q: ListNotesQuery) -> Result<ListNotesRespo
     let page_size = q.page_size.clamp(1, 200);
     let offset = (page - 1) * page_size;
 
-    // ---- WHERE builder (shared between count and select) ----
-    let mut where_qb: QueryBuilder<Sqlite> = QueryBuilder::new(" WHERE 1=1");
-    if let Some(needle_raw) = q.q.as_deref().map(str::trim).filter(|s| s.len() >= 2) {
-        let needle = format!("%{}%", needle_raw.replace('%', "\\%").replace('_', "\\_"));
-        where_qb.push(" AND (n.title LIKE ");
-        where_qb.push_bind(needle.clone());
-        where_qb.push(" ESCAPE '\\' OR COALESCE(n.description,'') LIKE ");
-        where_qb.push_bind(needle.clone());
-        where_qb.push(" ESCAPE '\\' OR COALESCE(n.location,'') LIKE ");
-        where_qb.push_bind(needle);
-        where_qb.push(" ESCAPE '\\')");
-    }
-    if let Some(from) = q.from_date.as_deref().filter(|s| !s.is_empty()) {
-        where_qb.push(" AND COALESCE(n.started_at, n.created_at) >= ");
-        where_qb.push_bind(format!("{from} 00:00:00"));
-    }
-    if let Some(to) = q.to_date.as_deref().filter(|s| !s.is_empty()) {
-        where_qb.push(" AND COALESCE(n.started_at, n.created_at) <= ");
-        where_qb.push_bind(format!("{to} 23:59:59"));
-    }
-
     // ---- count ----
     // Rebuild a fresh builder because QueryBuilder is single-use.
     let mut count_qb: QueryBuilder<Sqlite> = QueryBuilder::new("SELECT COUNT(*) FROM notes n");
@@ -307,7 +286,12 @@ pub async fn list(pool: &SqlitePool, q: ListNotesQuery) -> Result<ListNotesRespo
         q.to_date.as_deref(),
         &q.tag_names,
     );
-    sel_qb.push(" ORDER BY COALESCE(n.started_at, n.created_at) DESC, n.id DESC");
+    // datetime() 정규화 — started_at 은 ISO(`...T...Z`), created_at 은 공백 포맷이라
+    // 문자열 비교가 왜곡된다. started_at 이 5분 반올림이라 동률이 흔하므로
+    // created_at(초 단위)으로 tie-break 해 생성 순서를 보존한다.
+    sel_qb.push(
+        " ORDER BY COALESCE(datetime(n.started_at), n.created_at) DESC, n.created_at DESC, n.id DESC",
+    );
     sel_qb.push(" LIMIT ").push_bind(page_size);
     sel_qb.push(" OFFSET ").push_bind(offset);
 
@@ -392,11 +376,11 @@ fn append_where(
         qb.push(" ESCAPE '\\')");
     }
     if let Some(from) = from_date.filter(|s| !s.is_empty()) {
-        qb.push(" AND COALESCE(n.started_at, n.created_at) >= ");
+        qb.push(" AND COALESCE(datetime(n.started_at), n.created_at) >= ");
         qb.push_bind(format!("{from} 00:00:00"));
     }
     if let Some(to) = to_date.filter(|s| !s.is_empty()) {
-        qb.push(" AND COALESCE(n.started_at, n.created_at) <= ");
+        qb.push(" AND COALESCE(datetime(n.started_at), n.created_at) <= ");
         qb.push_bind(format!("{to} 23:59:59"));
     }
 }
