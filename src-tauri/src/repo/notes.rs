@@ -135,9 +135,27 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Note> {
         .ok_or_else(|| Error::NotFound(format!("note {id}")))
 }
 
-pub async fn update(pool: &SqlitePool, id: &str, input: UpdateNoteInput) -> Result<Note> {
+pub async fn update(pool: &SqlitePool, id: &str, mut input: UpdateNoteInput) -> Result<Note> {
     // Ensure exists first (clean 404 instead of silent no-op).
     let _existing = get(pool, id).await?;
+
+    // 노트 유형이 정해지는 순간 theme 이 명시되지 않았으면 기본 스타일을 서버에서
+    // 결정한다 — freeform=설정(default_theme_freeform, 없으면 notepad), minutes=
+    // 고정 default. 프론트가 스테일해도 기본 스타일 불변식이 깨지지 않게 한다.
+    if input.theme.is_none() {
+        match input.note_type.as_deref() {
+            Some("freeform") => {
+                let saved = crate::repo::settings::get(pool, "default_theme_freeform")
+                    .await
+                    .ok()
+                    .flatten()
+                    .filter(|v| THEME_IDS.contains(&v.as_str()));
+                input.theme = Some(saved.unwrap_or_else(|| "notepad".to_string()));
+            }
+            Some("minutes") => input.theme = Some("default".to_string()),
+            _ => {}
+        }
+    }
 
     let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("UPDATE notes SET ");
     let mut first = true;

@@ -36,7 +36,16 @@ pub async fn list_notes(
     state: State<'_, AppState>,
     query: ListNotesQuery,
 ) -> Result<ListNotesResponse> {
-    notes_repo::list(&state.db, query).await
+    let mut res = notes_repo::list(&state.db, query).await?;
+    // 진행 중인 에이전트 턴(freeform 받아적기/첨부 통합 등)은 DB에 processing 행이
+    // 없어 SQL 파생 has_active_task 에 안 잡힌다 — 인메모리 chat_runs 로 보강해
+    // 목록 배지가 '준비됨'으로 오표시되지 않게 한다.
+    for item in res.items.iter_mut() {
+        if item.has_active_task == 0 && state.chat_runs.contains(&item.id) {
+            item.has_active_task = 1;
+        }
+    }
+    Ok(res)
 }
 
 #[tauri::command]

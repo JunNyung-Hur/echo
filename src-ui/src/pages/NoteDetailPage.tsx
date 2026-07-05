@@ -1112,9 +1112,14 @@ function DonePanel({
               variant === "freeform" ? "flex-1 min-h-0 flex flex-col" : ""
             }`}
           >
-            {/* Copy overlay — text(→markdown) / html(→styled). Matches MinutesView. */}
+            {/* Copy overlay — text(→markdown) / html(→styled). Matches MinutesView.
+                freeform은 컨테이너 패딩이 없고 iframe 스크롤바가 우측 끝에 있어,
+                스크롤바를 침범하지 않게 안쪽으로 더 들인다. */}
             {!isEditing && (
-              <div ref={copyMenuRef} className="absolute top-2 right-2 z-10">
+              <div
+                ref={copyMenuRef}
+                className={`absolute z-10 ${variant === "freeform" ? "top-3 right-6" : "top-2 right-2"}`}
+              >
                 <button
                   onClick={() => setShowCopyMenu((v) => !v)}
                   className="p-1.5 bg-white border border-gray-300 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-50 shadow-sm cursor-pointer"
