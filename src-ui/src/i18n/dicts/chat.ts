@@ -5,14 +5,36 @@ import type { Entry } from "../dict";
  * 전사 언어 라벨(kor/eng/auto)·시각미정은 detail.lang.* / detail.time.unset 재사용.
  */
 export const chat = {
-  // tool progress (TOOL_LABEL)
-  "chat.tool.updateMeta": { ko: "정보 수정 중…", en: "Updating details…" },
-  "chat.tool.refine": { ko: "본문 정리 중…", en: "Refining the body…" },
+  // tool progress (TOOL_LABEL — 진행 라벨)
+  "chat.tool.readMinutes": { ko: "노트 확인 중…", en: "Reading the note…" },
+  "chat.tool.edit": { ko: "노트 편집 중…", en: "Editing the note…" },
+  "chat.tool.setTheme": { ko: "테마 변경 중…", en: "Changing the theme…" },
   "chat.tool.writeNote": { ko: "노트에 옮기는 중…", en: "Writing to the note…" },
   "chat.tool.recordingUrl": { ko: "녹음 파일 확인 중…", en: "Checking the recording…" },
   "chat.tool.readTranscript": { ko: "전사록 읽는 중…", en: "Reading the transcript…" },
   "chat.tool.retryTranscribe": { ko: "전사 다시 시작 중…", en: "Restarting transcription…" },
   "chat.tool.retryTask": { ko: "작업 재시작 중…", en: "Restarting the task…" },
+
+  // tool step cards (완료형 라벨 — parts 카드)
+  "chat.step.readMinutes": { ko: "노트 확인", en: "Read note" },
+  "chat.step.edit": { ko: "노트 편집", en: "Edit note" },
+  "chat.step.setTheme": { ko: "테마 변경", en: "Change theme" },
+  "chat.step.writeNote": { ko: "노트 작성", en: "Write note" },
+  "chat.step.recordingUrl": { ko: "녹음 파일", en: "Recording file" },
+  "chat.step.readTranscript": { ko: "전사록 조회", en: "Read transcript" },
+  "chat.step.transcribeAttachment": { ko: "녹음 전사", en: "Transcribe recording" },
+  "chat.step.retryTranscribe": { ko: "전사 재시작", en: "Restart transcription" },
+  "chat.step.retryTask": { ko: "작업 재시작", en: "Restart task" },
+  "chat.tool.failed": { ko: "실패했어요", en: "Failed" },
+  "chat.tool.noDetail": { ko: "(상세 없음)", en: "(no detail)" },
+  "chat.tool.secSuffix": { ko: "초", en: "s" },
+  "chat.tool.openFile": { ko: "파일 열기", en: "Open file" },
+
+  // ask_user 질문 카드
+  "chat.ask.yes": { ko: "네", en: "Yes" },
+  "chat.ask.no": { ko: "아니오", en: "No" },
+  "chat.ask.direct": { ko: "직접 입력", en: "Type my own" },
+  "chat.ask.directHint": { ko: "답변을 직접 입력하세요", en: "Type your answer" },
 
   // transcribing short labels (TRANSCRIBING_STEP_LABEL — 입력창 위 진행 카드)
   "chat.transcribing.finalize": { ko: "오디오 정리 중", en: "Cleaning up audio" },

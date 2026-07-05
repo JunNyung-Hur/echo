@@ -7,6 +7,9 @@ import {
   MoreHorizontal,
   Trash2,
   AlertTriangle,
+  AlertCircle,
+  Check,
+  ChevronRight,
   RotateCcw,
   Mic,
   Square,
@@ -23,31 +26,291 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { toast } from "sonner";
 
-import { chatApi, ChatMessage } from "@/api/chat";
+import {
+  chatApi,
+  ChatMessage,
+  parseParts,
+  type ChatAskPart,
+  type ChatPart,
+  type ChatToolPart,
+} from "@/api/chat";
 import { recordingsApi, type Recording } from "@/api/recordings";
 import { Note } from "@/api/notes";
 import { processingApi, TimelineEvent } from "@/api/processing";
 import AssistantMarkdown from "@/components/AssistantMarkdown";
+import { TranscriptBlock } from "@/components/TranscriptViewerModal";
 import VersionHistory from "@/components/VersionHistory";
 import NoteTags from "@/components/NoteTags";
 import SourceSelector from "@/components/SourceSelector";
 import WaveBars from "@/components/WaveBars";
 import { getSavedSource } from "@/lib/audioDevice";
-import { useLang } from "@/i18n/LangContext";
+import { buildUserState, type CapabilityInputs, type Stage as CapStage } from "@/lib/userState";
+import { useLang, type TFunc } from "@/i18n/LangContext";
 import type { DictKey } from "@/i18n/dict";
 
 // 첨부 가능한 오디오/영상(오디오 추출) 확장자 — FileUploader와 동일.
 const AUDIO_EXTS = ["mp3", "wav", "m4a", "webm", "ogg", "flac", "aac", "mp4", "mov", "mkv"];
 
 const TOOL_LABEL: Record<string, DictKey> = {
-  update_meeting_metadata: "chat.tool.updateMeta",
-  refine_minutes: "chat.tool.refine",
+  read_minutes: "chat.tool.readMinutes",
+  edit_minutes: "chat.tool.edit",
+  set_theme: "chat.tool.setTheme",
   write_note: "chat.tool.writeNote",
   get_recording_download_url: "chat.tool.recordingUrl",
   read_transcript: "chat.tool.readTranscript",
   retry_transcribe: "chat.tool.retryTranscribe",
   retry_failed_task: "chat.tool.retryTask",
 };
+
+// 툴 이름 → 스텝 카드 라벨(명사형). 없으면 raw name fallback.
+const TOOL_STEP_LABEL: Record<string, DictKey> = {
+  read_minutes: "chat.step.readMinutes",
+  edit_minutes: "chat.step.edit",
+  set_theme: "chat.step.setTheme",
+  write_note: "chat.step.writeNote",
+  get_recording_download_url: "chat.step.recordingUrl",
+  read_transcript: "chat.step.readTranscript",
+  transcribe_attachment: "chat.step.transcribeAttachment",
+  retry_transcribe: "chat.step.retryTranscribe",
+  retry_failed_task: "chat.step.retryTask",
+};
+function toolStepName(name: string, t: TFunc): string {
+  const key = TOOL_STEP_LABEL[name];
+  return key ? t(key) : name;
+}
+
+/// 첨부 전사 카드 — 여러 녹음이면 "(1/3)" 진행 표기를 라벨에 붙인다.
+function toolStepSuffix(part: ChatToolPart): string {
+  if (part.name !== "transcribe_attachment") return "";
+  const a = part.args as { current?: number; total?: number } | undefined;
+  if (a && typeof a.current === "number" && typeof a.total === "number" && a.total > 1) {
+    return ` (${a.current}/${a.total})`;
+  }
+  return "";
+}
+
+// 통합 tool-step 카드: 좌측 상태아이콘(스피너/체크/X) + 툴 이름 + 경과시간. 기본 접힘
+// (펼치면 결과 상세 — edit_minutes 는 빨강/초록 diff). 실패는 에러를 항상 노출.
+// (Meetzy MeetingChatPanel ToolStepCard 이식.)
+function ToolStepCard({ part, t }: { part: ChatToolPart; t: TFunc }) {
+  const [open, setOpen] = useState(false);
+  const status = part.status ?? "completed";
+  const label = toolStepName(part.name, t);
+  const elapsed = typeof part.elapsed_s === "number" ? part.elapsed_s : null;
+  const failed = status === "failed";
+  const errorMsg = failed ? part.result?.error || t("chat.tool.failed") : null;
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50/60">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 w-full text-left px-2.5 py-1.5 bg-transparent border-0 cursor-pointer"
+      >
+        {status === "running" ? (
+          <span className="w-3 h-3 border-2 border-sky-200 border-t-sky-500 rounded-full animate-spin shrink-0" />
+        ) : failed ? (
+          <AlertCircle size={13} className="text-red-500 shrink-0" />
+        ) : (
+          <Check size={13} className="text-emerald-600 shrink-0" />
+        )}
+        <span className="text-[12px] text-gray-600">
+          {label}
+          {toolStepSuffix(part)}
+        </span>
+        {elapsed != null && (
+          <span className="text-[11px] text-gray-400 tabular-nums">
+            · {elapsed}
+            {t("chat.tool.secSuffix")}
+          </span>
+        )}
+        <ChevronRight
+          size={13}
+          className={`ml-auto text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="px-2.5 pb-2 max-h-80 overflow-y-auto">
+          {part.name === "edit_minutes" && part.result?.ok && part.result?.diffs?.length ? (
+            // 편집 diff(빨강 before / 초록 after) — before/after 는 보이는 텍스트.
+            <div className="rounded-lg border border-gray-200 overflow-hidden text-[12px] leading-relaxed">
+              {part.result.diffs.map((d, i) => (
+                <div key={i} className="border-b border-gray-100 last:border-b-0">
+                  {d.before ? (
+                    <div className="px-2.5 py-1 bg-red-50 text-red-800 whitespace-pre-wrap">
+                      <span className="select-none text-red-400 mr-1">−</span>
+                      {d.before}
+                    </div>
+                  ) : null}
+                  {d.after ? (
+                    <div className="px-2.5 py-1 bg-emerald-50 text-emerald-800 whitespace-pre-wrap">
+                      <span className="select-none text-emerald-500 mr-1">+</span>
+                      {d.after}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-gray-500 whitespace-pre-wrap break-all">
+              {part.result ? JSON.stringify(part.result) : t("chat.tool.noDetail")}
+            </div>
+          )}
+        </div>
+      )}
+      {errorMsg && <div className="px-2.5 pb-2 text-[11px] text-red-600">{errorMsg}</div>}
+    </div>
+  );
+}
+
+// 툴의 리치 출력 — 스텝 카드 *밑(외부)*에 항상 노출. 사용자가 챗에서 클릭/소비하는
+// 산출물(파일 버튼·전사 미리보기)이 카드 접힘에 묻히지 않게 카드와 별개로 렌더.
+function toolRichOutput(part: ChatToolPart, t: TFunc) {
+  if (
+    part.name === "read_transcript" &&
+    (part.status ?? "completed") === "completed" &&
+    part.result?.ok &&
+    part.result?.transcript_id
+  ) {
+    return (
+      <TranscriptBlock
+        transcriptId={part.result.transcript_id}
+        previewText={part.result.preview ?? ""}
+      />
+    );
+  }
+  // 로컬 앱 — 다운로드 URL 대신 파일 열기 버튼 (openPath).
+  if (
+    part.name === "get_recording_download_url" &&
+    (part.status ?? "completed") === "completed" &&
+    part.result?.ok &&
+    part.result?.file_path
+  ) {
+    const fp = part.result.file_path;
+    return (
+      <button
+        onClick={() => openPath(fp).catch((e) => toast.error(String(e)))}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg border-0 cursor-pointer"
+      >
+        <FolderOpen size={13} />
+        {part.result.filename || t("chat.tool.openFile")}
+      </button>
+    );
+  }
+  return null;
+}
+
+// ask 카드 버튼 — 선택된 항목은 유지 표시, 비활성(이미 답함/전송 중)이면 클릭 불가.
+function AskButton({
+  selected,
+  disabled,
+  onClick,
+  children,
+}: {
+  selected: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`text-left px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+        selected
+          ? "border-sky-400 bg-sky-100 text-sky-800 font-medium"
+          : disabled
+            ? "border-gray-200 bg-white text-gray-400 cursor-default"
+            : "border-gray-300 bg-white text-gray-700 hover:border-sky-400 hover:bg-sky-50 cursor-pointer"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ask_user 질문 카드 — options 비면 네/아니오, 있으면 번호 버튼(최대4) + '직접 입력'.
+// 선택은 유저 말풍선으로 전송된다. 답변 후엔 비활성 + 고른 항목 표시.
+export interface AskContext {
+  active: boolean; // 이 카드가 마지막 대화 항목이고 전송 중 아님 → 클릭 가능
+  answered?: string; // 이 카드 다음 유저 메시지 내용(있으면 이미 답한 것)
+  onAnswer: (text: string) => void;
+  // '직접 입력' — 답변이 아니라 입력 수단 선택: 전송 없이 입력창 포커스만.
+  onDirectInput: () => void;
+  // '직접 입력'이 눌린 상태(전송 전까지 유지) — 버튼 눌림 표시 + 입력창 강조.
+  directArmed?: boolean;
+}
+
+function AskCard({ part, ask, t }: { part: ChatAskPart; ask?: AskContext; t: TFunc }) {
+  const active = ask?.active ?? false;
+  const answered = ask?.answered;
+  const onAnswer = ask?.onAnswer ?? (() => {});
+  const onDirectInput = ask?.onDirectInput ?? (() => {});
+  const options = part.options ?? [];
+  const yesno = options.length === 0;
+  const directLabel = t("chat.ask.direct");
+  // '직접 입력' 하이라이트는 소급 파생: 답변이 존재하는데 어떤 버튼과도 불일치 =
+  // 자유 입력으로 답함 (로컬 상태 불필요, 재로드에도 재현).
+  const presented = yesno ? [t("chat.ask.yes"), t("chat.ask.no")] : options;
+  const answeredIsCustom = answered != null && !presented.includes(answered);
+  const directPressed = answeredIsCustom || (active && (ask?.directArmed ?? false));
+  return (
+    <div className="max-w-[85%] rounded-2xl border border-sky-200 bg-sky-50/60 px-4 py-3">
+      <p className="mb-2 text-sm font-medium text-gray-800 whitespace-pre-wrap leading-relaxed">
+        {part.question}
+      </p>
+      {yesno ? (
+        <div className="flex flex-wrap gap-1.5">
+          {[t("chat.ask.yes"), t("chat.ask.no")].map((v) => (
+            <AskButton key={v} selected={answered === v} disabled={!active} onClick={() => onAnswer(v)}>
+              {v}
+            </AskButton>
+          ))}
+          {/* 모델이 열린 질문을 options 없이 부르는 계약 위반 대비 — 네/아니오에 갇히지 않게 */}
+          <AskButton selected={directPressed} disabled={!active} onClick={onDirectInput}>
+            {directLabel}
+          </AskButton>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {options.map((o, i) => (
+            <AskButton key={i} selected={answered === o} disabled={!active} onClick={() => onAnswer(o)}>
+              <span className="text-gray-400 mr-1">{i + 1}.</span>
+              {o}
+            </AskButton>
+          ))}
+          <AskButton selected={directPressed} disabled={!active} onClick={onDirectInput}>
+            <span className="text-gray-400 mr-1">{options.length + 1}.</span>
+            {directLabel}
+          </AskButton>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 한 assistant 메시지의 parts를 순서대로 세로 stack 렌더(텍스트/툴 카드+리치출력/ask).
+function MessageParts({ parts, t, ask }: { parts: ChatPart[]; t: TFunc; ask?: AskContext }) {
+  return (
+    <>
+      {parts.map((p, i) => {
+        if (p.type === "text") {
+          return p.text ? <AssistantMarkdown key={`t${i}`} text={p.text} /> : null;
+        }
+        if (p.type === "ask") {
+          return <AskCard key={`ask${i}`} part={p} ask={ask} t={t} />;
+        }
+        // read_minutes 는 내부 조회(현재 본문 읽기)라 사용자에게 카드로 안 보인다.
+        if (p.name === "read_minutes") return null;
+        const rich = toolRichOutput(p, t);
+        return (
+          <div key={p.tool_id || `tool${i}`} className="space-y-1.5">
+            <ToolStepCard part={p} t={t} />
+            {rich}
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 // transcribing 세부 step(finalize/transcribe/minutes) → 입력창 위 진행 카드의
 // 짧은 라벨. step을 못 받으면 "전사 중"으로 fallback (a2d9a6f).
@@ -82,6 +345,7 @@ export default function ChatPanel({
   progressPct = 0,
   transcribingStep,
   failureKind = null,
+  capability,
   onBack,
   onDelete,
   onRetry,
@@ -94,6 +358,8 @@ export default function ChatPanel({
   progressPct?: number;
   transcribingStep?: string;
   failureKind?: "transcript" | "minutes" | null;
+  /** capability registry 입력 — 매 전송에 user_state 스냅샷으로 동봉 (3-E-1). */
+  capability?: Omit<CapabilityInputs, "stage">;
   onBack: () => void;
   onDelete: () => void;
   onRetry: () => void;
@@ -103,12 +369,17 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  // 노트 재진입/새로고침 시 백엔드에서 여전히 도는 턴 — 응답 대기 인디케이터를
+  // 복원한다(라이브 이벤트는 리스너가 다시 받으므로 parts도 이어서 조립됨).
+  const [resuming, setResuming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   // 전송 직후 낙관적으로 보여줄 첨부 칩(턴 끝나면 실제 메시지로 교체).
   const [pendingRecs, setPendingRecs] = useState<Recording[]>([]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
-  const [streamText, setStreamText] = useState("");
+  // 스트리밍 중 조립되는 응답 parts(text/tool/ask) — 영속 메시지와 동일하게
+  // MessageParts로 렌더(텍스트 블록 + 툴 스텝 카드가 발생 순서대로 stack).
+  const [liveParts, setLiveParts] = useState<ChatPart[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [showVersionId, setShowVersionId] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
@@ -130,6 +401,8 @@ export default function ChatPanel({
   const [showArchive, setShowArchive] = useState(false);
   const importBusyRef = useRef(false);
   const [recSilent, setRecSilent] = useState(false);
+  // ask 카드 '직접 입력' 눌림 상태(전송 전까지 유지) — 입력창 강조 + placeholder 힌트.
+  const [askDirectArmed, setAskDirectArmed] = useState(false);
   const lastSoundRef = useRef(0);
   const [recElapsed, setRecElapsed] = useState(0);
   const recIdRef = useRef<string | null>(null);
@@ -171,6 +444,29 @@ export default function ChatPanel({
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // 진입 시 진행 중인 턴이 있으면 인디케이터 복원. 완료는 chat:done이 알린다.
+  useEffect(() => {
+    let alive = true;
+    setResuming(false);
+    setLiveParts([]);
+    chatApi
+      .running(noteId)
+      .then((r) => {
+        if (alive && r) setResuming(true);
+      })
+      .catch(() => {});
+    const unDone = listen<{ note_id: string }>("chat:done", (e) => {
+      if (e.payload.note_id !== noteId) return;
+      setResuming(false);
+      setLiveParts([]);
+      reload();
+    });
+    return () => {
+      alive = false;
+      unDone.then((fn) => fn());
+    };
+  }, [noteId, reload]);
 
   // freeform: 진입 시 전송 대기(미소비) 녹음을 첨부 칩으로 복원한다. 앱을 끄거나
   // 노트를 벗어났다 돌아와도 보내지 않은 녹음이 유지된다(Step 3/4 recovery).
@@ -245,8 +541,81 @@ export default function ChatPanel({
     });
     const unDelta = listen<{ note_id: string; delta: string }>("chat:delta", (e) => {
       if (e.payload.note_id !== noteId) return;
-      setStreamText((prev) => prev + e.payload.delta);
+      const delta = e.payload.delta;
+      setLiveParts((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.type === "text") {
+          next[next.length - 1] = { ...last, text: last.text + delta };
+        } else {
+          next.push({ type: "text", text: delta });
+        }
+        return next;
+      });
     });
+    // 도구 이름+id 확정 즉시(인자 스트리밍 전) 러닝 카드 — tool_id 로 upsert 해
+    // 인자 확정본 재발사에도 중복 카드가 생기지 않는다.
+    const unToolStart = listen<{ note_id: string; id: string; name: string; args: unknown }>(
+      "chat:tool_start",
+      (e) => {
+        if (e.payload.note_id !== noteId) return;
+        const { id, name, args } = e.payload;
+        setLiveParts((prev) => {
+          const next = [...prev];
+          const existing = next.findIndex((p) => p.type === "tool" && p.tool_id === id);
+          if (existing >= 0) {
+            const p = next[existing] as ChatToolPart;
+            next[existing] = { ...p, args: args ?? p.args };
+            return next;
+          }
+          // 재시도 합치기 — 직전 edit 카드가 미완료면 재사용(실패 카드 누적 방지).
+          const last = next[next.length - 1];
+          if (
+            last &&
+            last.type === "tool" &&
+            last.name === "edit_minutes" &&
+            name === "edit_minutes" &&
+            last.status !== "completed"
+          ) {
+            next[next.length - 1] = { ...last, tool_id: id, args: args ?? last.args, status: "running", result: null };
+            return next;
+          }
+          next.push({ type: "tool", tool_id: id, name, args, status: "running", elapsed_s: null, result: null });
+          return next;
+        });
+      },
+    );
+    const unToolResult = listen<{
+      note_id: string;
+      id: string;
+      name: string;
+      result: ChatToolPart["result"];
+      elapsed_s: number;
+    }>("chat:tool_result", (e) => {
+      if (e.payload.note_id !== noteId) return;
+      const { id, result, elapsed_s } = e.payload;
+      setLiveParts((prev) =>
+        prev.map((p) => {
+          if (p.type !== "tool" || p.tool_id !== id) return p;
+          const ok = result?.ok === true;
+          const retryable = result?.retryable === true;
+          return {
+            ...p,
+            status: ok ? "completed" : retryable ? "running" : "failed",
+            result,
+            elapsed_s,
+          };
+        }),
+      );
+    });
+    const unAsk = listen<{ note_id: string; question: string; options: string[] }>(
+      "chat:ask",
+      (e) => {
+        if (e.payload.note_id !== noteId) return;
+        const { question, options } = e.payload;
+        setLiveParts((prev) => [...prev, { type: "ask", question, options }]);
+      },
+    );
     // Lifecycle(전사·회의록 생성)로 timeline이 늘면 백엔드가 note:updated를 쏜다.
     // 그걸 받아 reload해야 첫 채팅 입력 전에도 타임라인이 실시간으로 채워진다.
     // 단, 전송 진행 중엔 메시지 reload를 미뤄 낙관적 버블 중복을 막는다(전사 동안
@@ -258,6 +627,9 @@ export default function ChatPanel({
     return () => {
       unStatus.then((fn) => fn());
       unDelta.then((fn) => fn());
+      unToolStart.then((fn) => fn());
+      unToolResult.then((fn) => fn());
+      unAsk.then((fn) => fn());
       unNote.then((fn) => fn());
     };
   }, [noteId, reload, reloadTimeline]);
@@ -313,35 +685,50 @@ export default function ChatPanel({
   }
 
   // Auto-track the bottom — but only while the user hasn't scrolled away.
+  // liveParts는 델타마다 새 배열로 교체되므로 자라는 동안 자동 스크롤이 따라간다.
   useLayoutEffect(() => {
     if (autoStickRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, timeline.length, pendingUser, status, streamText]);
+  }, [messages.length, timeline.length, pendingUser, status, liveParts]);
 
-  const send = async () => {
-    const text = input.trim();
-    const recIds = attachedRecs.map((r) => r.id);
+  // overrideText — ask 카드 선택지 클릭 시 그 텍스트를 바로 전송(입력창 경유 X).
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    const recIds = overrideText ? [] : attachedRecs.map((r) => r.id);
     // 텍스트나 첨부 녹음(1개 이상) 중 하나는 있어야 하고, 녹음/정리 중엔 전송 불가.
     if ((!text && recIds.length === 0) || sending || recState === "recording" || recState === "finalizing") return;
     stopPlayback(); // 첨부를 보내면 재생 중이던 녹음을 멈춘다.
-    setInput("");
+    if (!overrideText) setInput("");
+    setAskDirectArmed(false);
     setSending(true);
     setPendingUser(text || null);
     setPendingRecs(attachedRecs); // 낙관적 칩(턴 끝나면 실제 메시지 칩으로 교체)
     setStatus(t("chat.thinking"));
-    setStreamText("");
+    setLiveParts([]);
     // 첨부는 전송 즉시 비운다(전사·종합은 백엔드가 처리 — Step 4).
     setAttachedRecs([]);
+    // user_state 스냅샷(3-E-1) — 화면 capability + 실패 배너 + 버전 이력 모달 상태.
+    const userState = buildUserState({
+      stage: stage as CapStage,
+      hasFinalizedRecording: capability?.hasFinalizedRecording ?? false,
+      hasActiveBody: capability?.hasActiveBody ?? false,
+      hasFailedTranscript: capability?.hasFailedTranscript ?? false,
+      hasFailedBody: capability?.hasFailedBody ?? false,
+      archivedBodyCount: capability?.archivedBodyCount ?? 0,
+      versionHistoryOpen: showVersionId != null,
+      transcribingFailureKind: failureKind,
+      recordingIds: recIds.length ? recIds : undefined,
+    });
     try {
-      await chatApi.send(noteId, text, recIds.length ? { stage, recordingIds: recIds } : { stage });
+      await chatApi.send(noteId, text, userState);
     } catch (e) {
       toast.error(String(e));
     } finally {
       setSending(false);
       setStatus(null);
-      setStreamText("");
-      // 실제 메시지를 불러온 뒤에 낙관적 버블(텍스트·칩)을 치워 깜빡임을 막는다.
+      // 실제 메시지를 불러온 뒤에 낙관적 버블(텍스트·칩·라이브 parts)을 치워
+      // 깜빡임을 막는다.
       chatApi
         .list(noteId)
         .then(setMessages)
@@ -349,6 +736,7 @@ export default function ChatPanel({
         .finally(() => {
           setPendingUser(null);
           setPendingRecs([]);
+          setLiveParts([]);
         });
       processingApi.listTimeline(noteId).then(setTimeline).catch(() => {});
       // 성공 시 백엔드가 첨부를 consumed 처리 → 빈 목록. 실패 시 미소비 녹음이
@@ -527,8 +915,14 @@ export default function ChatPanel({
   // feed (matches the old MeetingChatPanel).
   const feed = [
     ...messages
-      // 내용 있는 메시지 + 첨부 녹음만 있는(내용 빈) 유저 메시지를 남긴다.
-      .filter((m) => m.content.trim() || (m.role === "user" && (m.recordings?.length ?? 0) > 0))
+      // 내용 있는 메시지 + 첨부 녹음만 있는(내용 빈) 유저 메시지 + parts 있는
+      // assistant 메시지(텍스트 없이 툴 카드만인 응답)를 남긴다.
+      .filter(
+        (m) =>
+          m.content.trim() ||
+          (m.role === "user" && (m.recordings?.length ?? 0) > 0) ||
+          (m.role === "assistant" && m.parts),
+      )
       .map((m) => ({ k: "msg" as const, at: m.created_at, m })),
     // "녹음이 정리되었습니다"(recording_stopped)는 항상 숨기고, freeform 첨부 전송의
     // 전사 시작/완료 pill도 숨긴다(자체 status·결과 메시지로 대체).
@@ -723,19 +1117,50 @@ export default function ChatPanel({
               </div>
             );
           }
+          // parts 가 있으면 발생 순서대로 렌더(텍스트/툴 카드/ask 카드), 없으면
+          // 레거시 content 폴백. ask 카드는 마지막 메시지 + 미답변일 때만 활성.
+          const parts = parseParts(m);
+          const hasAsk = parts?.some((p) => p.type === "ask") ?? false;
+          let askCtx: AskContext | undefined;
+          if (hasAsk) {
+            const idx = messages.findIndex((x) => x.id === m.id);
+            const nextUser = idx >= 0
+              ? messages.slice(idx + 1).find((x) => x.role === "user")
+              : undefined;
+            const isLast = messages.length > 0 && messages[messages.length - 1].id === m.id;
+            askCtx = {
+              active: isLast && !sending && !resuming && !pendingUser,
+              answered: nextUser?.content,
+              onAnswer: (text) => send(text),
+              onDirectInput: () => {
+                setAskDirectArmed(true);
+                inputRef.current?.focus();
+              },
+              directArmed: askDirectArmed,
+            };
+          }
           return (
             <div key={m.id} className="flex justify-start" data-role="assistant">
-              <div className="max-w-[90%] space-y-2">
-                <AssistantMarkdown text={m.content} />
-                {m.note_body_version_id && (
-                  <button
-                    onClick={() => setShowVersionId(m.note_body_version_id)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 cursor-pointer transition-colors"
-                    title={t("chat.viewVersion.title")}
-                  >
-                    <FileText size={11} />
-                    <span>{t("chat.viewVersion")}</span>
-                  </button>
+              <div className="max-w-[90%] w-full space-y-2">
+                {parts && parts.length > 0 ? (
+                  // 신규: parts(text/tool/ask) 순서대로 렌더 — 버전 확인은 편집
+                  // diff 카드가 담당하므로 별도 칩 없음 (Meetzy 동일).
+                  <MessageParts parts={parts} t={t} ask={askCtx} />
+                ) : (
+                  // 구버전 메시지(parts 없음): 기존 본문 + 버전 칩.
+                  <>
+                    <AssistantMarkdown text={m.content} />
+                    {m.note_body_version_id && (
+                      <button
+                        onClick={() => setShowVersionId(m.note_body_version_id)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 cursor-pointer transition-colors"
+                        title={t("chat.viewVersion.title")}
+                      >
+                        <FileText size={11} />
+                        <span>{t("chat.viewVersion")}</span>
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -759,22 +1184,35 @@ export default function ChatPanel({
           </div>
         )}
 
-        {sending && (
-          <div className="flex justify-start">
-            <div className="max-w-[90%] space-y-2">
-              {streamText ? (
-                <AssistantMarkdown text={streamText} />
-              ) : (
-                <div className="flex items-center gap-1 py-1.5">
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{ animationDelay: "0ms" }} />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{ animationDelay: "200ms" }} />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{ animationDelay: "400ms" }} />
+        {(sending || resuming) &&
+          (() => {
+            // Meetzy pendingAssistant 패턴 — 라이브 parts를 MessageParts로 렌더.
+            // 다음 LLM 호출이 도는 동안(첫 토큰 전)이나 숨김 툴(read_minutes) 실행
+            // 동안엔 신호가 없어 멈춘 것처럼 보이므로 "작업 중" 점을 하단에 띄운다.
+            // 단 *보이는* 툴 카드가 이미 running 스피너를 돌리는 중이면 중복이라 생략.
+            const last = liveParts[liveParts.length - 1];
+            const lastIsVisibleRunningTool =
+              !!last &&
+              last.type === "tool" &&
+              last.status === "running" &&
+              last.name !== "read_minutes";
+            return (
+              <div className="flex justify-start">
+                <div className="max-w-[90%] w-full space-y-2">
+                  {liveParts.length > 0 && <MessageParts parts={liveParts} t={t} />}
+                  {!lastIsVisibleRunningTool && (
+                    // 응답 대기 — Meetzy MeetingChatPanel과 동일한 점 3개 pulse.
+                    // (status 문구 없음; 진행 표시는 스텝 카드가 담당.)
+                    <div className="flex items-center gap-1 py-1.5">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{ animationDelay: "200ms" }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{ animationDelay: "400ms" }} />
+                    </div>
+                  )}
                 </div>
-              )}
-              {status && <div className="text-[11px] text-gray-400 italic">{status}</div>}
-            </div>
-          </div>
-        )}
+              </div>
+            );
+          })()}
       </div>
 
       {showScrollBtn && (
@@ -907,7 +1345,7 @@ export default function ChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={t("chat.input.placeholder")}
+            placeholder={askDirectArmed ? t("chat.ask.directHint") : t("chat.input.placeholder")}
             className="flex-1 text-sm text-gray-700 bg-transparent border-0 outline-none resize-none placeholder:text-gray-400 max-h-24 overflow-y-auto leading-6"
           />
           {stage === "freeform" && recState === "idle" && (
@@ -958,7 +1396,7 @@ export default function ChatPanel({
               recState !== "finalizing";
             return (
               <button
-                onClick={send}
+                onClick={() => send()}
                 disabled={!canSend}
                 className={`p-1.5 rounded-lg border-0 shrink-0 ${
                   canSend
@@ -978,6 +1416,7 @@ export default function ChatPanel({
       {showVersionId && (
         <VersionHistory
           noteId={noteId}
+          theme={note.theme}
           initialVersionId={showVersionId}
           onClose={() => setShowVersionId(null)}
           onRestored={() => {

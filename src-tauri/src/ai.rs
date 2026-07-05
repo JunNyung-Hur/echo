@@ -19,6 +19,24 @@ use crate::models::AiEndpoint;
 /// Per-call ceiling, mirrors the old worker `LLM_TIMEOUT`.
 const LLM_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// 무한/폭주 생성 백스톱 — 텍스트+모든 tool args 합산이 이걸 넘으면 강제 중단
+/// (Meetzy ab0ba14 RUNAWAY_CHARS). 영구 매달림 방지.
+const RUNAWAY_CHARS: usize = 200_000;
+
+/// endpoint 별 모델 옵션 적용 (b7ba31c) — max_tokens 설정 시 max_completion_tokens,
+/// disable_thinking 시 chat_template_kwargs.enable_thinking=false (llama.cpp/vLLM
+/// Qwen3 계열 thinking 끄기).
+fn apply_llm_options(payload: &mut serde_json::Value, endpoint: &AiEndpoint) {
+    if let Some(mt) = endpoint.max_tokens {
+        if mt > 0 {
+            payload["max_completion_tokens"] = json!(mt);
+        }
+    }
+    if endpoint.disable_thinking != 0 {
+        payload["chat_template_kwargs"] = json!({ "enable_thinking": false });
+    }
+}
+
 #[derive(Debug)]
 pub struct ChatResult {
     pub content: String,
@@ -44,7 +62,7 @@ pub async fn chat_completion(
     } else {
         endpoint.api_key.as_str()
     };
-    let payload = json!({
+    let mut payload = json!({
         "model": endpoint.model_id,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -52,6 +70,7 @@ pub async fn chat_completion(
         ],
         "temperature": 0.2,
     });
+    apply_llm_options(&mut payload, endpoint);
 
     let client = reqwest::Client::builder()
         .timeout(LLM_TIMEOUT)
@@ -135,6 +154,7 @@ pub async fn chat_with_tools(
     if !tools.is_empty() {
         payload["tools"] = json!(tools);
     }
+    apply_llm_options(&mut payload, endpoint);
 
     let client = reqwest::Client::builder()
         .timeout(LLM_TIMEOUT)
@@ -191,15 +211,25 @@ pub async fn chat_with_tools(
     Err(Error::Other(last_err))
 }
 
-/// Streaming chat-with-tools. Forwards each assistant text delta to `on_delta`
-/// as it arrives (for live UI streaming), accumulates tool_call deltas, and
+/// 스트리밍 중 상위(에이전트 루프)로 흘려보내는 이벤트.
+pub enum StreamEvent<'a> {
+    /// assistant 텍스트 델타.
+    Delta(&'a str),
+    /// 도구 이름+id 가 처음 확정된 순간(=모델이 그 도구를 부르기로 확정) — 인자
+    /// 스트리밍이 수십 초 걸려도 즉시 "실행 중" 카드를 띄울 수 있게 조기 발사
+    /// (Meetzy ab0ba14). 한 도구당 한 번만.
+    ToolCallStart { id: &'a str, name: &'a str },
+}
+
+/// Streaming chat-with-tools. Forwards text deltas + early tool-call starts to
+/// `on_event` as they arrive (for live UI), accumulates tool_call deltas, and
 /// returns the assembled turn. Single attempt (streaming retry is not
-/// meaningful mid-stream); a connect/HTTP failure surfaces as Err.
+/// meaningful mid-stream); a connect/HTTP/런어웨이 failure surfaces as Err.
 pub async fn chat_with_tools_streaming(
     endpoint: &AiEndpoint,
     messages: &[serde_json::Value],
     tools: &[serde_json::Value],
-    mut on_delta: impl FnMut(&str),
+    mut on_event: impl FnMut(StreamEvent),
 ) -> Result<ChatTurn> {
     let url = format!(
         "{}/chat/completions",
@@ -214,6 +244,7 @@ pub async fn chat_with_tools_streaming(
     if !tools.is_empty() {
         payload["tools"] = json!(tools);
     }
+    apply_llm_options(&mut payload, endpoint);
 
     let client = reqwest::Client::builder()
         .timeout(LLM_TIMEOUT)
@@ -238,6 +269,8 @@ pub async fn chat_with_tools_streaming(
     let mut content = String::new();
     // index → (id, name, arg_buf)
     let mut tool_accum: BTreeMap<u64, (String, String, String)> = BTreeMap::new();
+    // 조기 발사한 도구 index — 이름+id 확정 시 한 번만 ToolCallStart.
+    let mut announced: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| Error::Other(format!("llm stream error: {e}")))?;
@@ -260,7 +293,7 @@ pub async fn chat_with_tools_streaming(
             if let Some(c) = delta["content"].as_str() {
                 if !c.is_empty() {
                     content.push_str(c);
-                    on_delta(c);
+                    on_event(StreamEvent::Delta(c));
                 }
             }
             if let Some(tcs) = delta["tool_calls"].as_array() {
@@ -280,7 +313,23 @@ pub async fn chat_with_tools_streaming(
                     if let Some(a) = tc["function"]["arguments"].as_str() {
                         entry.2.push_str(a);
                     }
+                    if !entry.0.is_empty() && !entry.1.is_empty() && announced.insert(idx) {
+                        let (id_c, name_c) = (entry.0.clone(), entry.1.clone());
+                        on_event(StreamEvent::ToolCallStart {
+                            id: &id_c,
+                            name: &name_c,
+                        });
+                    }
                 }
+            }
+            // 런어웨이 백스톱 — 무한 생성으로 인한 영구 매달림 방지 (ab0ba14).
+            let grown =
+                content.len() + tool_accum.values().map(|(_, _, a)| a.len()).sum::<usize>();
+            if grown > RUNAWAY_CHARS {
+                tracing::warn!(total = grown, "[stream] RUNAWAY — aborting");
+                return Err(Error::Other(
+                    "응답이 비정상적으로 길어 중단했어요. 다시 시도해 주세요.".into(),
+                ));
             }
         }
     }

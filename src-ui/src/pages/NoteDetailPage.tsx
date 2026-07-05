@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import { FileText, Clock, Pencil, AlertTriangle, Check, RotateCcw, Copy, PenLine, ClipboardList } from "lucide-react";
+import { FileText, Clock, Pencil, AlertTriangle, Check, RotateCcw, Copy, PenLine, ClipboardList, Palette } from "lucide-react";
 import { toast } from "sonner";
 
 import { notesApi, Note, UpdateNoteInput } from "@/api/notes";
@@ -11,6 +11,9 @@ import { deriveStage, Stage } from "@/lib/stage";
 import { getSavedSource } from "@/lib/audioDevice";
 import { useLang, useT, type TFunc } from "@/i18n/LangContext";
 import type { DictKey } from "@/i18n/dict";
+import { srcDocFor, isHtmlContent } from "@/lib/markdownDoc";
+import { THEMES } from "@/lib/themes";
+import { settingsApi } from "@/api/settings";
 import SourceSelector from "@/components/SourceSelector";
 import RecordingWidget from "@/components/RecordingWidget";
 import Spinner from "@/components/Spinner";
@@ -274,6 +277,19 @@ export default function NoteDetailPage() {
           }
           transcribingStep={progress?.stage}
           failureKind={failureKind}
+          capability={{
+            hasFinalizedRecording: recordings.some((r) => r.format === "webm"),
+            hasActiveBody: !!activeBody,
+            hasFailedTranscript: transcripts.some(
+              (t) => t.status === "failed" || t.status === "cancelled",
+            ),
+            hasFailedBody: noteBodies.some(
+              (b) => b.archived === 0 && (b.status === "failed" || b.status === "cancelled"),
+            ),
+            archivedBodyCount: noteBodies.filter(
+              (b) => b.archived !== 0 && b.status === "completed",
+            ).length,
+          }}
           onBack={() => navigate("/notes")}
           onDelete={onDelete}
           onRetry={onRetry}
@@ -311,7 +327,14 @@ function NoteTypePicker({ noteId, onPicked }: { noteId: string; onPicked: () => 
     if (busy) return;
     setBusy(true);
     try {
-      await notesApi.update(noteId, { note_type: type });
+      // 노트 스타일(테마)은 freeform 전용 — 설정(default_theme_freeform) 값, 없으면
+      // 노란 공책. 회의록 작성형은 항상 고정 기본 테마.
+      let theme = "default";
+      if (type === "freeform") {
+        const saved = await settingsApi.get("default_theme_freeform").catch(() => null);
+        theme = saved && THEMES.some((th) => th.id === saved) ? saved : "notepad";
+      }
+      await notesApi.update(noteId, { note_type: type, theme });
       await onPicked();
     } catch (e) {
       toast.error(String(e));
@@ -407,6 +430,14 @@ function FreeformPage({
           noteId={noteId}
           note={note}
           stage="freeform"
+          capability={{
+            hasFinalizedRecording: false,
+            hasActiveBody: !!activeBody,
+            hasFailedTranscript: false,
+            hasFailedBody: false,
+            archivedBodyCount: bodies.filter((b) => b.archived !== 0 && b.status === "completed")
+              .length,
+          }}
           onBack={() => navigate("/notes")}
           onDelete={onDelete}
           onRetry={() => {}}
@@ -714,46 +745,9 @@ function TranscribingPanel({
   );
 }
 
-// F-NOTE-004 — which note meta fields changed since this body was generated
-// (compare the body's context_snapshot to the note's current values). Returns
-// human labels for a badge; description is excluded (it's an auto summary).
-// freeform 노트 템플릿(디폴트: 노란 괘선). 줄간격=글 줄높이=32px로 묶어 본문 글이 줄에 앉는다.
-// write_note는 콘텐츠 조각(시맨틱 태그)만 만들고, 이 CSS가 디자인을 담당 → 템플릿 교체로 디자인 변경.
-// 헤더(버튼)는 iframe 밖 React 셸이라 디자인 무관. 일반 문단(p/li)만 줄에 칼, 제목/표는 자유.
-const FREEFORM_TEMPLATE_CSS = `
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
-  body {
-    min-height: 100%;
-    padding: 4px 48px 64px;
-    background-color: #fffdf2;
-    background-image: repeating-linear-gradient(#fffdf2, #fffdf2 31px, #e7dfbf 31px, #e7dfbf 32px);
-    background-position: 0 4px;
-    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    font-size: 15px;
-    line-height: 32px;
-    color: #2d2a20;
-    word-break: break-word;
-  }
-  p { margin: 0; line-height: 32px; }
-  ul, ol { margin: 0; padding-left: 22px; }
-  li { line-height: 32px; }
-  h1 { font-size: 22px; line-height: 32px; margin: 32px 0 0; font-weight: 700; }
-  h2 { font-size: 19px; line-height: 32px; margin: 32px 0 0; font-weight: 700; }
-  h3 { font-size: 16px; line-height: 32px; margin: 32px 0 0; font-weight: 600; }
-  table { border-collapse: collapse; margin: 0; }
-  body > :first-child { margin-top: 0; }
-  td, th { border: 1px solid #d9d2b0; padding: 3px 10px; line-height: 26px; }
-  th { background: rgba(0,0,0,0.03); }
-  strong { font-weight: 700; }
-  a { color: #2563eb; }
-`;
-function wrapFreeformTemplate(content: string): string {
-  // 기존에 저장된 전체 HTML이 와도 body 안쪽만 추출해 템플릿으로 감싼다(중첩 방지).
-  const m = content.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-  const inner = m ? m[1] : content;
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${FREEFORM_TEMPLATE_CSS}</style></head><body>${inner}</body></html>`;
-}
+// 본문 디자인은 테마 프리셋(lib/themes.ts)이 담당한다 — 마크다운(신규)·HTML 조각
+// (레거시 freeform)은 srcDocFor가 테마 CSS로 감싸고, 자체 <style>을 가진 레거시
+// full-HTML minutes만 그대로 렌더한다. 기존 노란 괘선 템플릿은 notepad 테마로 흡수.
 
 function DonePanel({
   body,
@@ -767,6 +761,7 @@ function DonePanel({
   variant?: "minutes" | "freeform";
 }) {
   const t = useT();
+  const { lang } = useLang();
   const noteId = note.id;
   const [html, setHtml] = useState<string | null>(null);
   const [loadingBody, setLoadingBody] = useState(true);
@@ -774,11 +769,23 @@ function DonePanel({
   const [showTranscript, setShowTranscript] = useState(false);
   const [transcriptId, setTranscriptId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [theme, setTheme] = useState(note.theme || "default");
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
   const editRef = useRef<HTMLIFrameElement | null>(null);
   const copyMenuRef = useRef<HTMLDivElement | null>(null);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // 레거시 HTML 본문(자체 스타일 보유/조각)이면 iframe-편집, 마크다운(신규)이면 raw
+  // 텍스트 편집. 빈 본문(freeform 첫 작성)은 마크다운으로 시작한다.
+  const htmlMode = !!html && isHtmlContent(html);
+
+  useEffect(() => {
+    setTheme(note.theme || "default");
+  }, [note.theme]);
 
   useEffect(() => {
     let alive = true;
@@ -823,22 +830,38 @@ function DonePanel({
     };
   }, [noteId, variant, body]);
 
-  // Close the copy menu on outside click. iframe clicks don't bubble to the
-  // parent document, so also close on window blur (clicking into the body
+  // Close the copy/theme menus on outside click. iframe clicks don't bubble to
+  // the parent document, so also close on window blur (clicking into the body
   // iframe blurs the parent window) to catch clicks landing on the content.
   useEffect(() => {
-    if (!showCopyMenu) return;
+    if (!showCopyMenu && !showThemeMenu) return;
     function onDoc(e: MouseEvent) {
       if (copyMenuRef.current && !copyMenuRef.current.contains(e.target as Node)) setShowCopyMenu(false);
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) setShowThemeMenu(false);
     }
-    const onBlur = () => setShowCopyMenu(false);
+    const onBlur = () => {
+      setShowCopyMenu(false);
+      setShowThemeMenu(false);
+    };
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("blur", onBlur);
     return () => {
       document.removeEventListener("mousedown", onDoc);
       window.removeEventListener("blur", onBlur);
     };
-  }, [showCopyMenu]);
+  }, [showCopyMenu, showThemeMenu]);
+
+  // 테마 선택 — 즉시 로컬 반영(뷰어 iframe 재렌더) + 서버 저장. 부모 refresh가
+  // note를 다시 가져오면 useEffect가 동기화한다.
+  const pickTheme = async (id: string) => {
+    setTheme(id);
+    setShowThemeMenu(false);
+    try {
+      await notesApi.update(noteId, { theme: id });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
 
   // freeform은 본문이 없어도(빈 노트) 같은 셸을 그린다 — 헤더 버튼 일관 + 빈 줄 패드.
   if (!body && variant !== "freeform") return null;
@@ -866,13 +889,19 @@ function DonePanel({
     }
   };
   const saveEdit = async () => {
-    const doc = editRef.current?.contentDocument;
-    if (!doc) return;
-    // freeform은 템플릿 CSS를 제외한 콘텐츠(body 안쪽)만 저장 → 다음 렌더 때 다시 템플릿으로 감쌈.
-    const edited =
-      variant === "freeform"
-        ? (doc.body?.innerHTML ?? "")
-        : "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
+    let edited: string;
+    if (!htmlMode) {
+      // 마크다운(신규) — textarea의 raw 마크다운을 그대로 저장.
+      edited = editContent;
+    } else {
+      const doc = editRef.current?.contentDocument;
+      if (!doc) return;
+      // freeform 조각은 테마 CSS를 제외한 콘텐츠(body 안쪽)만 저장 → 렌더 때 다시 감쌈.
+      edited =
+        variant === "freeform"
+          ? (doc.body?.innerHTML ?? "")
+          : "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
+    }
     setSaving(true);
     try {
       await processingApi.saveManualEdit(noteId, edited);
@@ -923,8 +952,9 @@ function DonePanel({
     return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   };
   const handleCopyText = async () => {
+    // 마크다운 본문은 원문 그대로가 곧 텍스트 사본. 레거시 HTML만 변환한다.
     const doc = editRef.current?.contentDocument;
-    const text = doc?.body ? htmlToMarkdown(doc.body) : html ?? "";
+    const text = !htmlMode ? html ?? "" : doc?.body ? htmlToMarkdown(doc.body) : html ?? "";
     await navigator.clipboard.writeText(text);
     setCopiedType("text");
     setShowCopyMenu(false);
@@ -974,9 +1004,11 @@ function DonePanel({
   return (
     <section
       className={`flex-1 min-h-0 flex flex-col rounded-lg shadow-md overflow-hidden w-full max-w-4xl mx-auto ${
-        variant === "freeform" ? "border border-amber-200/70" : "bg-white border border-[#dbdee3]"
+        variant === "freeform" && theme === "notepad"
+          ? "border border-amber-200/70"
+          : "bg-white border border-[#dbdee3]"
       }`}
-      style={variant === "freeform" ? { backgroundColor: "#fffdf2" } : undefined}
+      style={variant === "freeform" && theme === "notepad" ? { backgroundColor: "#fffdf2" } : undefined}
     >
       <div
         className={`flex items-center justify-end gap-1 px-5 py-3 shrink-0 ${
@@ -1002,6 +1034,40 @@ function DonePanel({
           </>
         ) : (
           <>
+            {/* 노트 스타일(테마) 전환 — freeform(노트 필기형) 전용. 회의록 작성형은
+                고정 기본 테마(Meetzy 동일). */}
+            {variant === "freeform" && (
+            <div ref={themeMenuRef} className="relative">
+              <button
+                onClick={() => setShowThemeMenu((v) => !v)}
+                className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-md px-2 py-1 bg-transparent border-0 cursor-pointer transition-colors"
+                title={lang === "en" ? "Note style" : "노트 스타일"}
+              >
+                <Palette className="w-3.5 h-3.5" />
+                {lang === "en" ? "Note style" : "노트 스타일"}
+              </button>
+              {showThemeMenu && (
+                <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-300 rounded-lg shadow-lg py-1 w-36">
+                  {THEMES.map((th) => (
+                    <button
+                      key={th.id}
+                      onClick={() => pickTheme(th.id)}
+                      className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 bg-transparent border-0 cursor-pointer flex items-center gap-2 ${
+                        theme === th.id ? "text-sky-700 font-medium" : "text-gray-700"
+                      }`}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full border border-gray-300 shrink-0"
+                        style={{ backgroundColor: th.swatch }}
+                      />
+                      {lang === "en" ? th.nameEn : th.nameKo}
+                      {theme === th.id && <Check className="w-3 h-3 ml-auto" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            )}
             {variant === "minutes" && transcriptId && (
               <button
                 onClick={() => setShowTranscript(true)}
@@ -1021,7 +1087,10 @@ function DonePanel({
               {t("detail.history")}
             </button>
             <button
-              onClick={() => setIsEditing(true)}
+              onClick={() => {
+                setEditContent(html ?? "");
+                setIsEditing(true);
+              }}
               disabled={!html && variant !== "freeform"}
               className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-md px-2 py-1 bg-transparent border-0 cursor-pointer transition-colors disabled:opacity-40"
               title={t("detail.editManual")}
@@ -1071,27 +1140,37 @@ function DonePanel({
                 )}
               </div>
             )}
-            {isEditing ? (
-              // allow-same-origin so we can flip contentEditable + read back the
-              // edited HTML; still no allow-scripts. Distinct key forces a remount
-              // (so onLoad fires) instead of React reusing the viewer element.
+            {isEditing && !htmlMode ? (
+              // 마크다운(신규) — raw 마크다운을 textarea로 직접 편집 (Meetzy MinutesView
+              // markdown edit mode와 동일). 빈 freeform 첫 작성도 이 경로.
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className={`w-full resize-none px-4 py-3 border border-gray-200 rounded-md text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white ${
+                  variant === "freeform" ? "flex-1 min-h-0" : "h-full"
+                }`}
+              />
+            ) : isEditing ? (
+              // 레거시 HTML — allow-same-origin so we can flip contentEditable +
+              // read back the edited HTML; still no allow-scripts. Distinct key
+              // forces a remount (so onLoad fires).
               <iframe
                 key="body-editor"
                 ref={editRef}
                 sandbox="allow-same-origin"
-                srcDoc={variant === "freeform" ? wrapFreeformTemplate(html ?? "") : html ?? undefined}
+                srcDoc={srcDocFor(html ?? "", theme)}
                 onLoad={onEditLoad}
                 title={t("detail.body.edit")}
                 className={`w-full border-0 ${variant === "freeform" ? "flex-1 min-h-0 bg-transparent" : "h-full bg-white"}`}
               />
             ) : (
               // allow-same-origin (no allow-scripts) so the copy overlay can read
-              // the rendered doc back; the LLM HTML still can't run scripts.
+              // the rendered doc back; the LLM output still can't run scripts.
               <iframe
                 key="body-viewer"
                 ref={editRef}
                 sandbox="allow-same-origin"
-                srcDoc={variant === "freeform" ? wrapFreeformTemplate(html ?? "") : html ?? undefined}
+                srcDoc={srcDocFor(html ?? "", theme)}
                 onLoad={variant === "freeform" ? undefined : adjustIframeHeight}
                 scrolling={variant === "freeform" ? "yes" : "no"}
                 title={t("detail.body.title")}
@@ -1110,6 +1189,7 @@ function DonePanel({
       {showVersions && (
         <VersionHistory
           noteId={noteId}
+          theme={theme}
           onClose={() => setShowVersions(false)}
           onRestored={() => {
             setShowVersions(false);

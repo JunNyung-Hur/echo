@@ -3,6 +3,7 @@ import { Clock, X, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import { processingApi, NoteBody } from "@/api/processing";
+import { srcDocFor } from "@/lib/markdownDoc";
 import Spinner from "@/components/Spinner";
 import { useT } from "@/i18n/LangContext";
 
@@ -19,12 +20,15 @@ function formatDate(iso: string): string {
 export default function VersionHistory({
   noteId,
   initialVersionId,
+  theme,
   onClose,
   onRestored,
 }: {
   noteId: string;
   /** Pre-select this version (e.g. from a chat "이 시점 본문 보기" chip). */
   initialVersionId?: string;
+  /** 마크다운 버전 렌더에 쓸 테마 프리셋 id (레거시 full-HTML은 자체 스타일). */
+  theme?: string;
   onClose: () => void;
   onRestored: () => void;
 }) {
@@ -198,7 +202,7 @@ export default function VersionHistory({
                 <iframe
                   key={selectedId}
                   title={`body-${selectedId}`}
-                  srcDoc={content}
+                  srcDoc={srcDocFor(content, theme)}
                   sandbox=""
                   onLoad={() => setIframeReady(true)}
                   className={`w-full h-full border-0 transition-opacity duration-150 ${

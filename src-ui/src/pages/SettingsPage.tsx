@@ -22,6 +22,8 @@ import {
 import SourceSelector from "@/components/SourceSelector";
 import { AddModelModal } from "@/components/SetupGate";
 import { settingsApi } from "@/api/settings";
+import { ThemeThumb } from "@/components/ThemeThumb";
+import { THEMES } from "@/lib/themes";
 import { useLang, useT, LANGS } from "@/i18n/LangContext";
 
 interface FormState {
@@ -32,6 +34,7 @@ interface FormState {
   request_mode: string;
   chunk_seconds: string;
   max_tokens: string;
+  disable_thinking: boolean;
 }
 
 const emptyForm: FormState = {
@@ -42,6 +45,7 @@ const emptyForm: FormState = {
   request_mode: "chat_completions",
   chunk_seconds: "",
   max_tokens: "",
+  disable_thinking: false,
 };
 
 // 설정 → 언어 탭. ui_lang 토글(LangContext = settings DB + localStorage 미러).
@@ -74,6 +78,72 @@ function LanguageSection() {
   );
 }
 
+// 설정 → 노트 스타일 탭. 노트 필기형 새 노트에 적용될 기본 스타일 (settings KV:
+// default_theme_freeform). 회의록 작성형은 고정 기본 테마라 여기 없음. 노트별
+// 변경은 본문 패널의 '노트 스타일' 버튼(기존)이 담당.
+function ThemeDefaultsSection() {
+  const { lang } = useLang();
+  const en = lang === "en";
+  const [sel, setSel] = useState<string>("notepad");
+
+  useEffect(() => {
+    void settingsApi.get("default_theme_freeform").then((v) => {
+      if (v && THEMES.some((t) => t.id === v)) setSel(v);
+    });
+  }, []);
+
+  const pick = async (id: string) => {
+    setSel(id);
+    try {
+      await settingsApi.set("default_theme_freeform", id);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  return (
+    <div className="w-full">
+      <h2 className="text-sm font-medium text-gray-900 mb-3">
+        {en ? "Note style" : "노트 스타일"}
+      </h2>
+      <p className="text-xs text-gray-500 mb-5">
+        {en
+          ? "Default style for new freeform notes. Each note's style can still be changed from the note panel."
+          : "새로 만드는 노트 필기형에 적용될 기본 스타일이에요. 노트별 스타일은 본문 패널의 '노트 스타일' 버튼으로 언제든 바꿀 수 있어요."}
+      </p>
+      <div className="flex gap-4">
+        {THEMES.map((th) => {
+          const active = sel === th.id;
+          return (
+            <button
+              key={th.id}
+              onClick={() => pick(th.id)}
+              className="flex flex-col items-center gap-2 bg-transparent border-0 cursor-pointer p-0 group"
+            >
+              <div
+                className={`rounded-xl p-1 transition-all ${
+                  active
+                    ? "ring-2 ring-sky-500 bg-sky-50"
+                    : "ring-1 ring-transparent group-hover:ring-gray-300"
+                }`}
+              >
+                <ThemeThumb themeId={th.id} />
+              </div>
+              <span
+                className={`text-xs font-medium ${
+                  active ? "text-sky-700" : "text-gray-600 group-hover:text-gray-900"
+                }`}
+              >
+                {en ? th.nameEn : th.nameKo}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // 설정 → 알림 탭. 종류별 완료 알림 on/off (settings KV: notify_*). 기본 on.
 function NotificationSection() {
   const { lang } = useLang();
@@ -90,10 +160,11 @@ function NotificationSection() {
       desc: en ? "When the note has been organized." : "노트 정리가 끝났을 때 알려드려요.",
     },
   ];
-  const [on, setOn] = useState<Record<string, boolean>>({ notify_transcribe: true, notify_note: true });
+  // 기본 off — 명시적으로 켠 경우("1")에만 on (backend worker::notify와 동일 판정).
+  const [on, setOn] = useState<Record<string, boolean>>({ notify_transcribe: false, notify_note: false });
   useEffect(() => {
     void Promise.all([settingsApi.get("notify_transcribe"), settingsApi.get("notify_note")]).then(
-      ([tr, nt]) => setOn({ notify_transcribe: tr !== "0", notify_note: nt !== "0" }),
+      ([tr, nt]) => setOn({ notify_transcribe: tr === "1", notify_note: nt === "1" }),
     );
   }, []);
   const toggle = async (key: string) => {
@@ -153,7 +224,7 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const t = useT();
   const { lang } = useLang();
-  const [section, setSection] = useState<"audio" | "models" | "language" | "notifications">("audio");
+  const [section, setSection] = useState<"audio" | "models" | "theme" | "language" | "notifications">("audio");
   const [tab, setTab] = useState<EndpointKind>("llm");
   const [endpoints, setEndpoints] = useState<AiEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -195,6 +266,7 @@ export default function SettingsPage() {
       request_mode: form.request_mode,
       chunk_seconds: form.chunk_seconds ? Number(form.chunk_seconds) : null,
       max_tokens: form.max_tokens ? Number(form.max_tokens) : null,
+      disable_thinking: form.disable_thinking,
     };
     try {
       if (editingId) {
@@ -219,6 +291,7 @@ export default function SettingsPage() {
       request_mode: ep.request_mode || "chat_completions",
       chunk_seconds: ep.chunk_seconds != null ? String(ep.chunk_seconds) : "",
       max_tokens: ep.max_tokens != null ? String(ep.max_tokens) : "",
+      disable_thinking: ep.disable_thinking === 1,
     });
     setEditingId(ep.id);
     setShowForm(true);
@@ -277,6 +350,7 @@ export default function SettingsPage() {
           {([
             ["audio", t("settings.tab.audio")],
             ["models", t("settings.tab.models")],
+            ["theme", lang === "en" ? "Note style" : "노트 스타일"],
             ["notifications", lang === "en" ? "Notifications" : "알림"],
             ["language", t("settings.tab.language")],
           ] as [typeof section, string][]).map(([key, label]) => (
@@ -296,12 +370,17 @@ export default function SettingsPage() {
 
         {section === "audio" && <SourceSelector testMode="inline" />}
 
+        {section === "theme" && <ThemeDefaultsSection />}
+
         {section === "notifications" && <NotificationSection />}
 
         {section === "language" && <LanguageSection />}
 
         {section === "models" && (
           <div>
+            <h2 className="text-sm font-medium text-gray-900 mb-3">
+              {t("settings.tab.models")}
+            </h2>
             <p className="text-xs text-gray-500 mb-4">
               {t("settings.models.intro")}
             </p>
@@ -478,14 +557,48 @@ export default function SettingsPage() {
                           className="form-input"
                         />
                       </Field>
-                      <Field label={t("settings.field.maxTokens")}>
-                        <input
-                          value={form.max_tokens}
-                          onChange={(e) => setForm({ ...form, max_tokens: e.target.value })}
-                          placeholder={t("settings.field.maxTokens.ph")}
-                          className="form-input"
-                        />
-                      </Field>
+                      {/* b7ba31c — transcriptions 방식은 최대 출력 토큰 개념이 없어 숨김. */}
+                      {form.request_mode !== "transcriptions" && (
+                        <Field label={t("settings.field.maxTokens")}>
+                          <input
+                            value={form.max_tokens}
+                            onChange={(e) => setForm({ ...form, max_tokens: e.target.value })}
+                            placeholder={t("settings.field.maxTokens.ph")}
+                            className="form-input"
+                          />
+                        </Field>
+                      )}
+                    </div>
+                  </>
+                )}
+                {tab === "llm" && (
+                  <>
+                    {/* b7ba31c — LLM 최대 출력 토큰 + Thinking 비활성화 토글. */}
+                    <Field label={t("settings.field.maxTokens")}>
+                      <input
+                        value={form.max_tokens}
+                        onChange={(e) => setForm({ ...form, max_tokens: e.target.value })}
+                        placeholder={t("settings.field.maxTokens.ph")}
+                        className="form-input"
+                      />
+                    </Field>
+                    <div className="flex items-center justify-between px-1 py-1">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-gray-700">
+                          {lang === "en" ? "Disable thinking" : "Thinking 비활성화"}
+                        </div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">
+                          {lang === "en"
+                            ? "Sends enable_thinking=false (llama.cpp / vLLM Qwen3 family)."
+                            : "enable_thinking=false 전송 (llama.cpp / vLLM Qwen3 계열)."}
+                        </div>
+                      </div>
+                      <Toggle
+                        checked={form.disable_thinking}
+                        onChange={() =>
+                          setForm({ ...form, disable_thinking: !form.disable_thinking })
+                        }
+                      />
                     </div>
                   </>
                 )}

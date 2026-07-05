@@ -13,6 +13,8 @@ export interface AiEndpoint {
   request_mode: string;
   chunk_seconds: number | null;
   max_tokens: number | null;
+  /** b7ba31c — thinking 비활성화(chat_template_kwargs.enable_thinking=false). */
+  disable_thinking: number;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -27,6 +29,7 @@ export interface CreateEndpointInput {
   request_mode?: string;
   chunk_seconds?: number | null;
   max_tokens?: number | null;
+  disable_thinking?: boolean;
 }
 
 export interface UpdateEndpointInput {
@@ -37,6 +40,7 @@ export interface UpdateEndpointInput {
   request_mode?: string;
   chunk_seconds?: number | null;
   max_tokens?: number | null;
+  disable_thinking?: boolean;
 }
 
 export interface TestResult {

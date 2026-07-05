@@ -12,8 +12,16 @@ export const source = {
   "source.refreshList": { ko: "장치 다시 검색", en: "Re-scan devices" },
   "source.settings": { ko: "입력 소스 설정", en: "Input source settings" },
   "source.select": { ko: "입력 소스 선택", en: "Select input source" },
+  "source.select.caption": {
+    ko: "녹음에 사용할 마이크 또는 시스템 사운드를 골라요. 입력 볼륨도 여기서 조절할 수 있어요.",
+    en: "Pick the microphone or system sound to record from. You can also adjust the input volume here.",
+  },
   "source.selectFirst": { ko: "먼저 입력 소스를 선택해주세요.", en: "Select an input source first." },
   "source.test": { ko: "입력 소스 테스트", en: "Test input source" },
+  "source.test.caption": {
+    ko: "짧게 녹음해 파형과 레벨로 소리가 제대로 들어오는지 확인해요.",
+    en: "Record a short clip and check the waveform and level to make sure sound is coming in.",
+  },
   "source.default": { ko: " (기본)", en: " (default)" },
   "source.volume": { ko: "입력 소스 볼륨", en: "Input volume" },
 

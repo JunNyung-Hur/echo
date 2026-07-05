@@ -21,6 +21,7 @@ pub struct CreateEndpointInput {
     pub request_mode: Option<String>,
     pub chunk_seconds: Option<i64>,
     pub max_tokens: Option<i64>,
+    pub disable_thinking: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +33,7 @@ pub struct UpdateEndpointInput {
     pub request_mode: Option<String>,
     pub chunk_seconds: Option<Option<i64>>,
     pub max_tokens: Option<Option<i64>>,
+    pub disable_thinking: Option<bool>,
 }
 
 fn validate_kind(kind: &str) -> Result<()> {
@@ -97,8 +99,8 @@ pub async fn create(pool: &SqlitePool, input: CreateEndpointInput) -> Result<AiE
     let id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO ai_endpoints \
-         (id, kind, name, model_id, api_base_url, api_key, request_mode, chunk_seconds, max_tokens, is_active) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (id, kind, name, model_id, api_base_url, api_key, request_mode, chunk_seconds, max_tokens, disable_thinking, is_active) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&input.kind)
@@ -109,6 +111,7 @@ pub async fn create(pool: &SqlitePool, input: CreateEndpointInput) -> Result<AiE
     .bind(input.request_mode.unwrap_or_else(|| "chat_completions".into()))
     .bind(input.chunk_seconds)
     .bind(input.max_tokens)
+    .bind(input.disable_thinking.unwrap_or(false) as i64)
     .bind(is_active)
     .execute(pool)
     .await?;
@@ -126,7 +129,8 @@ pub async fn update(pool: &SqlitePool, id: &str, input: UpdateEndpointInput) -> 
             api_key = COALESCE(?, api_key), \
             request_mode = COALESCE(?, request_mode), \
             chunk_seconds = ?, \
-            max_tokens = ? \
+            max_tokens = ?, \
+            disable_thinking = COALESCE(?, disable_thinking) \
          WHERE id = ?",
     )
     .bind(&input.name)
@@ -145,6 +149,7 @@ pub async fn update(pool: &SqlitePool, id: &str, input: UpdateEndpointInput) -> 
         Some(v) => v,
         None => _existing.max_tokens,
     })
+    .bind(input.disable_thinking.map(|b| b as i64))
     .bind(id)
     .execute(pool)
     .await?;

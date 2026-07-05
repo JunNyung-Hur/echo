@@ -30,6 +30,9 @@ pub struct AppState {
     pub cancellations: cancellation::Registry,
     /// Live native capture sessions keyed by recording_id (D-023 / P1R-01).
     pub captures: std::sync::Mutex<std::collections::HashMap<String, audio_capture::CaptureHandle>>,
+    /// 진행 중인 에이전트 턴의 note_id 집합 — 노트 재진입 시 "응답 대기" 인디케이터
+    /// 복원용 (chat_running 커맨드). chat_send 시작 시 insert, 종료 시 remove.
+    pub chat_runs: dashmap::DashSet<String>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -75,6 +78,7 @@ pub fn run() {
                 db,
                 cancellations: cancellation::Registry::new(),
                 captures: std::sync::Mutex::new(std::collections::HashMap::new()),
+                chat_runs: dashmap::DashSet::new(),
             });
 
             // Tray icon + menu (P1-03).
@@ -177,6 +181,7 @@ pub fn run() {
             commands::processing::restore_note_body,
             commands::processing::save_manual_body_edit,
             commands::chat::chat_send,
+            commands::chat::chat_running,
             commands::chat::list_chat_messages,
             commands::settings::get_setting,
             commands::settings::set_setting,

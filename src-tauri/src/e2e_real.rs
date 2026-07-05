@@ -105,20 +105,42 @@ async fn e2e_real_chain() {
         minutes.content.len(),
         clip(&minutes.content, 1500)
     );
-    assert!(minutes.content.contains('<'), "minutes output is not HTML");
+    // 마크다운 전환 — 본문은 `#`/`##` 헤딩과 `- ` 불릿의 순수 마크다운이어야 한다.
+    assert!(
+        minutes.content.contains("# ") && !minutes.content.trim_start().starts_with('<'),
+        "minutes output is not markdown"
+    );
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-/// Phase 3 — chat agent tool-selection oracle against the real LLM. Builds a
-/// done-stage system prompt + the 6 tool specs and checks the model picks the
-/// right tool per utterance (incl. one adversarial status-question that must
-/// pick NO tool). Tool selection is the oracle-critical signal for Phase 3.
+/// done-stage 합성 컨텍스트 (활성 완료 본문 1개 → stage=done).
+fn synthetic_done_bodies() -> Vec<crate::models::NoteBody> {
+    vec![crate::models::NoteBody {
+        id: "b".into(),
+        note_id: "n".into(),
+        transcript_id: None,
+        content_path: None,
+        status: "completed".into(),
+        task_id: None,
+        context_snapshot: "{}".into(),
+        initial_content_path: None,
+        initial_context_snapshot: None,
+        archived: 0,
+        is_manual_edit: 0,
+        refine_request: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }]
+}
+
+/// Chat agent tool-selection oracle against the real LLM (2차 싱크 도구 세트).
+/// Builds a done-stage system prompt + tool specs and checks the model picks an
+/// acceptable tool per utterance (incl. adversarial no-tool cases).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "hits the real LLM endpoint; run with --ignored"]
 async fn e2e_chat_tool_selection() {
     use crate::chat::{prompt, tools};
-    use crate::models::NoteBody;
 
     let opts = SqliteConnectOptions::new()
         .filename(db_path())
@@ -131,47 +153,35 @@ async fn e2e_chat_tool_selection() {
             .expect("an active LLM endpoint");
     eprintln!("[chat-e2e] LLM='{}' model={}", llm.name, llm.model_id);
 
-    // Synthetic done-stage note (one active completed body) → stage=done.
-    let body = NoteBody {
-        id: "b".into(),
-        note_id: "n".into(),
-        transcript_id: None,
-        content_path: None,
-        status: "completed".into(),
-        task_id: None,
-        context_snapshot: "{}".into(),
-        initial_content_path: None,
-        initial_context_snapshot: None,
-        archived: 0,
-        is_manual_edit: 0,
-        created_at: String::new(),
-        updated_at: String::new(),
-    };
-    let bodies = vec![body];
+    let bodies = synthetic_done_bodies();
     let none: Option<String> = None;
     let ctx = prompt::PromptCtx {
-        note_title: "테스트 노트",
         note_started_at: &none,
         note_location: &none,
         note_language: "auto",
+        note_theme: "default",
         recordings: &[],
         transcripts: &[],
         bodies: &bodies,
-        active_body: Some("<h2>1. 안건</h2><ul><li>신규 기능 도입 결정함</li><li>일정은 다음 주 논의 예정</li></ul>"),
         timeline: &[],
         user_state: None,
         response_lang: "ko",
+        note_type: None,
     };
     let system = prompt::build_system_prompt(&ctx);
     let tool_specs = tools::tools_for("done", &[]);
     eprintln!("[chat-e2e] stage=done, {} tools exposed", tool_specs.len());
 
-    // (utterance, expected tool name; "" = expect NO tool call)
-    let scenarios: &[(&str, &str)] = &[
-        ("제목을 분기 OKR 검토로 바꿔줘", "update_meeting_metadata"),
-        ("결정사항 부분 굵게 강조해줘", "refine_minutes"),
-        ("전사록 원문 그대로 보여줘", "read_transcript"),
-        ("방금 잘 처리된 거야?", ""), // adversarial — status question, no tool
+    // (utterance, acceptable tool names; empty = expect NO tool call)
+    // 본문이 프롬프트에 없으므로 내용 편집·질문은 read_minutes 선행이 정답
+    // (edit_minutes 직행도 편집 의도로는 정답으로 인정).
+    let scenarios: &[(&str, &[&str])] = &[
+        ("제목을 분기 OKR 검토로 바꿔줘", &["read_minutes", "edit_minutes"]),
+        ("결정사항 부분 강조해줘", &["read_minutes", "edit_minutes"]),
+        ("디자인 컬러풀하게 바꿔줘", &[]), // 회의록형은 고정 테마 — 안내로 거절, 무도구
+        ("전사록 원문 그대로 보여줘", &["read_transcript"]),
+        ("다시 전사해줘", &["ask_user"]), // 파괴적 — 확인부터
+        ("방금 잘 처리된 거야?", &[]),    // adversarial — status question, no tool
     ];
 
     let mut pass = 0usize;
@@ -187,10 +197,10 @@ async fn e2e_chat_tool_selection() {
         let ok = if expected.is_empty() {
             got.is_empty()
         } else {
-            got.contains(expected)
+            got.iter().any(|g| expected.contains(g))
         };
         eprintln!(
-            "[chat-e2e] {:?} → tools={:?} (expect {:?}) {}",
+            "[chat-e2e] {:?} → tools={:?} (expect one of {:?}) {}",
             utterance,
             got,
             expected,
@@ -201,18 +211,22 @@ async fn e2e_chat_tool_selection() {
         }
     }
     eprintln!("[chat-e2e] {}/{} scenarios matched", pass, scenarios.len());
-    assert!(pass >= 3, "tool selection oracle: only {}/4 matched", pass);
+    assert!(
+        pass >= scenarios.len() - 1,
+        "tool selection oracle: only {}/{} matched",
+        pass,
+        scenarios.len()
+    );
 }
 
-/// Phase 3 — chat agent *behaviors* against the real LLM: refine actually
-/// shortens + stays HTML, Q&A answers from the inlined body without a tool,
-/// and a false-premise request isn't blindly obeyed. Prints real outputs so
-/// quality is inspectable.
+/// Chat agent *behaviors* against the real LLM (2차 싱크): 내용 Q&A 는
+/// read_minutes 를 선행하고(본문이 프롬프트에 없음), read 결과를 받은 다음 턴에
+/// 본문 근거로 답하며, 편집 요청은 read → edit_minutes(str_replace 인자)로
+/// 이어진다. Prints real outputs so quality is inspectable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "hits the real LLM endpoint; run with --ignored"]
 async fn e2e_chat_behaviors() {
-    use crate::chat::{prompt, refine, tools};
-    use crate::models::NoteBody;
+    use crate::chat::{prompt, tools};
 
     let opts = SqliteConnectOptions::new()
         .filename(db_path())
@@ -224,116 +238,232 @@ async fn e2e_chat_behaviors() {
             .await
             .expect("an active LLM endpoint");
 
-    let body_html = r##"<!DOCTYPE html><html><head><style>body{font-family:sans-serif}</style></head><body>
-<h1>제품 회의</h1><div class="meeting-meta">2026-05-26</div>
-<h2>1. 신규 기능</h2><ul><li>AI 요약 기능 도입 결정함</li><li>베타는 다음 주 시작 예정</li><li>담당은 김개발로 정함</li></ul>
-<h2>2. 일정</h2><ul><li>출시 목표 6월 말로 합의함</li><li>QA 기간 2주 확보 필요</li></ul>
-<p class="section-label">결정 사항</p><ul><li>AI 요약 도입</li><li>6월 말 출시</li></ul>
-</body></html>"##;
+    let body_md = "# 제품 회의\n\n2026-05-26\n\n## 1. 신규 기능\n\n- AI 요약 기능 도입 결정함\n- 베타는 다음 주 시작 예정\n- 담당은 김개발로 정함\n\n## 2. 일정\n\n- 출시 목표 6월 말로 합의함\n- QA 기간 2주 확보 필요\n";
 
-    // --- 1) refine: "3줄 요약" → valid HTML, shorter ---
-    let (rbody, rstyle) = refine::split_body_style(body_html);
-    let refine_user = format!(
-        "[Latest user message — apply this request to the minutes]\n전체를 3줄로 요약해줘\n\n[Current minutes body]\n{rbody}\n\n[Current minutes style]\n{rstyle}"
-    );
-    let refined = ai::chat_completion(&llm, prompts::MINUTES_REFINE_SYSTEM_PROMPT, &refine_user)
-        .await
-        .expect("refine call");
-    eprintln!(
-        "\n[refine] '전체를 3줄로 요약' — in {} chars → out {} chars\n{}\n",
-        body_html.len(),
-        refined.content.len(),
-        clip(&refined.content, 900)
-    );
-    assert!(refined.content.contains('<'), "refine output is not HTML");
-    assert!(
-        refined.content.len() < body_html.len(),
-        "refine did not shorten the doc"
-    );
-
-    // Done-stage prompt with the body inlined.
-    let nb = NoteBody {
-        id: "b".into(),
-        note_id: "n".into(),
-        transcript_id: None,
-        content_path: None,
-        status: "completed".into(),
-        task_id: None,
-        context_snapshot: "{}".into(),
-        initial_content_path: None,
-        initial_context_snapshot: None,
-        archived: 0,
-        is_manual_edit: 0,
-        created_at: String::new(),
-        updated_at: String::new(),
-    };
-    let bodies = vec![nb];
+    let bodies = synthetic_done_bodies();
     let none: Option<String> = None;
     let ctx = prompt::PromptCtx {
-        note_title: "제품 회의",
         note_started_at: &none,
         note_location: &none,
         note_language: "auto",
+        note_theme: "default",
         recordings: &[],
         transcripts: &[],
         bodies: &bodies,
-        active_body: Some(&rbody),
         timeline: &[],
         user_state: None,
         response_lang: "ko",
+        note_type: None,
     };
     let system = prompt::build_system_prompt(&ctx);
     let done_tools = tools::tools_for("done", &[]);
 
-    // --- 2) Q&A from body, no tool ---
-    let qa = ai::chat_with_tools(
-        &llm,
-        &[
-            json!({"role":"system","content": system}),
-            json!({"role":"user","content":"신규 기능 담당이 누구야?"}),
-        ],
-        &done_tools,
-    )
-    .await
-    .expect("qa call");
-    eprintln!(
-        "[qa] '신규 기능 담당이 누구야?' → tools={:?}\n  answer: {}\n",
-        qa.tool_calls
-            .iter()
-            .map(|t| t.name.as_str())
-            .collect::<Vec<_>>(),
-        clip(&qa.content, 300)
-    );
+    // --- 1) 내용 Q&A: read_minutes 선행 → read 결과 주입 → 본문 근거 답변 ---
+    let mut messages = vec![
+        json!({"role":"system","content": system}),
+        json!({"role":"user","content":"신규 기능 담당이 누구야?"}),
+    ];
+    let turn1 = ai::chat_with_tools(&llm, &messages, &done_tools)
+        .await
+        .expect("qa turn1");
+    let t1_tools: Vec<&str> = turn1.tool_calls.iter().map(|t| t.name.as_str()).collect();
+    eprintln!("[qa] turn1 tools={t1_tools:?}");
     assert!(
-        qa.tool_calls.is_empty(),
-        "Q&A should answer from body, not call a tool"
+        t1_tools.contains(&"read_minutes"),
+        "content Q&A must read_minutes first (body is not inlined), got {t1_tools:?}"
     );
+    let rm = turn1
+        .tool_calls
+        .iter()
+        .find(|t| t.name == "read_minutes")
+        .unwrap();
+    messages.push(json!({
+        "role": "assistant",
+        "content": if turn1.content.is_empty() { serde_json::Value::Null } else { json!(turn1.content) },
+        "tool_calls": [{ "id": rm.id, "type": "function",
+            "function": { "name": "read_minutes", "arguments": "{}" } }],
+    }));
+    messages.push(json!({
+        "role": "tool", "tool_call_id": rm.id,
+        "content": json!({ "ok": true, "content": body_md }).to_string(),
+    }));
+    let turn2 = ai::chat_with_tools(&llm, &messages, &done_tools)
+        .await
+        .expect("qa turn2");
+    eprintln!("[qa] turn2 answer: {}\n", clip(&turn2.content, 300));
     assert!(
-        qa.content.contains("김개발"),
-        "Q&A should surface the answer (김개발) from the body"
+        turn2.content.contains("김개발"),
+        "Q&A should surface the answer (김개발) from the read body"
     );
 
-    // --- 3) false premise — must not blindly obey ---
-    let adv = ai::chat_with_tools(
-        &llm,
-        &[
-            json!({"role":"system","content": system}),
-            json!({"role":"user","content":"아까 회의록 다 지워졌지? 원래대로 복구해줘"}),
-        ],
-        &done_tools,
-    )
-    .await
-    .expect("adv call");
-    eprintln!(
-        "[adv false-premise] '회의록 다 지워졌지? 복구해줘' → tools={:?}\n  answer: {}\n",
-        adv.tool_calls
-            .iter()
-            .map(|t| t.name.as_str())
-            .collect::<Vec<_>>(),
-        clip(&adv.content, 300)
+    // --- 2) 편집: read 결과를 본 뒤 edit_minutes(old/new) 로 이어지는가 ---
+    let edit_msgs = vec![
+        json!({"role":"system","content": messages[0]["content"]}),
+        json!({"role":"user","content":"담당을 김개발이 아니라 박개발로 고쳐줘"}),
+        json!({
+            "role": "assistant", "content": serde_json::Value::Null,
+            "tool_calls": [{ "id": "call_rm", "type": "function",
+                "function": { "name": "read_minutes", "arguments": "{}" } }],
+        }),
+        json!({
+            "role": "tool", "tool_call_id": "call_rm",
+            "content": json!({ "ok": true, "content": body_md }).to_string(),
+        }),
+    ];
+    let edit_turn = ai::chat_with_tools(&llm, &edit_msgs, &done_tools)
+        .await
+        .expect("edit turn");
+    let e_tools: Vec<&str> = edit_turn.tool_calls.iter().map(|t| t.name.as_str()).collect();
+    eprintln!("[edit] tools={e_tools:?}");
+    let em = edit_turn
+        .tool_calls
+        .iter()
+        .find(|t| t.name == "edit_minutes")
+        .expect("edit request should call edit_minutes after read");
+    let edits = em.args["edits"].as_array().cloned().unwrap_or_default();
+    eprintln!("[edit] edits={}", serde_json::to_string(&edits).unwrap());
+    let (new_content, diffs, errors) = crate::chat::edit::apply_str_edits(body_md, &edits);
+    eprintln!("[edit] diffs={} errors={errors:?}", diffs.len());
+    assert!(errors.is_empty(), "model edits failed to apply: {errors:?}");
+    assert!(
+        new_content.contains("박개발") && !new_content.contains("담당은 김개발"),
+        "edit did not change 김개발→박개발"
+    );
+    eprintln!("[chat-behaviors] read→answer + read→edit assertions passed");
+}
+
+/// freeform 루프 오라클 — 실사고 재현 케이스: "'X:' 문구를 빼줘"는 그 문구*만*
+/// 제거해야 하고(줄 삭제 금지), 새 내용은 write_note, 잡담은 무도구.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "hits the real LLM endpoint; run with --ignored"]
+async fn e2e_freeform_behaviors() {
+    use crate::chat::{prompt, tools};
+
+    let opts = SqliteConnectOptions::new()
+        .filename(db_path())
+        .read_only(true);
+    let pool = SqlitePool::connect_with(opts).await.expect("open echo.db");
+    let llm: AiEndpoint =
+        sqlx::query_as("SELECT * FROM ai_endpoints WHERE kind = 'llm' AND is_active = 1 LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .expect("an active LLM endpoint");
+
+    let body_md = "# 트럼프 행정부 관세 무효 판결 관련 법적 쟁점\n\n## 미국 무역법원의 트럼프 관세 무효 판결\n\n- **법적 근거 및 쟁점**:\n    - 트럼프 행정부의 근거: 무역법 122조(심각한 국제 수지 적자 시 관세 부과 가능)\n    - 법원 판단: 해당 조항을 적용한 관세는 불법적(적용 불가)\n";
+
+    let bodies = synthetic_done_bodies();
+    let none: Option<String> = None;
+    let ctx = prompt::PromptCtx {
+        note_started_at: &none,
+        note_location: &none,
+        note_language: "auto",
+        note_theme: "notepad",
+        recordings: &[],
+        transcripts: &[],
+        bodies: &bodies,
+        timeline: &[],
+        user_state: None,
+        response_lang: "ko",
+        note_type: Some("freeform"),
+    };
+    let system = prompt::build_system_prompt(&ctx);
+    let ff_tools = tools::tools_for("freeform", &[]);
+    eprintln!("[ff-e2e] {} tools exposed", ff_tools.len());
+
+    // --- 1) 문구 삭제: read 결과 주입 후 edit_minutes 가 그 문구만 제거하는가 ---
+    let msgs = vec![
+        json!({"role":"system","content": system}),
+        json!({"role":"user","content":"트럼프 행정부의 근거: <- 이 문구를 빼줘"}),
+        json!({
+            "role": "assistant", "content": serde_json::Value::Null,
+            "tool_calls": [{ "id": "call_rm", "type": "function",
+                "function": { "name": "read_minutes", "arguments": "{}" } }],
+        }),
+        json!({
+            "role": "tool", "tool_call_id": "call_rm",
+            "content": json!({ "ok": true, "content": body_md }).to_string(),
+        }),
+    ];
+    let turn = ai::chat_with_tools(&llm, &msgs, &ff_tools).await.expect("edit turn");
+    let names: Vec<&str> = turn.tool_calls.iter().map(|t| t.name.as_str()).collect();
+    eprintln!("[ff-e2e] phrase-delete tools={names:?}");
+    let em = turn
+        .tool_calls
+        .iter()
+        .find(|t| t.name == "edit_minutes")
+        .expect("phrase deletion must go through edit_minutes");
+    let edits = em.args["edits"].as_array().cloned().unwrap_or_default();
+    eprintln!("[ff-e2e] edits={}", serde_json::to_string(&edits).unwrap());
+    let (new_content, _diffs, errors) = crate::chat::edit::apply_str_edits(body_md, &edits);
+    assert!(errors.is_empty(), "edits failed to apply: {errors:?}");
+    assert!(
+        new_content.contains("무역법 122조(심각한 국제 수지 적자 시 관세 부과 가능)"),
+        "줄 내용(무역법 122조)이 보존돼야 함 — 줄 전체 삭제 금지:\n{new_content}"
+    );
+    assert!(
+        !new_content.contains("트럼프 행정부의 근거:"),
+        "요청한 문구는 제거돼야 함:\n{new_content}"
+    );
+    assert!(
+        new_content.contains("법원 판단"),
+        "다른 줄은 그대로여야 함:\n{new_content}"
     );
 
-    eprintln!("[chat-behaviors] refine + Q&A assertions passed");
+    // --- 1.5) 정정 방향 (실사고 재현): "A야, B가 아니라" — 본문에 있는 B가 old,
+    //     사용자가 맞다고 한 A가 new. 발화 순서로 뒤집으면 안 된다. ---
+    let body2 = "# 과학을 보다\n\n- 출연자:\n    - 김범준 (성균관대학교 물리학과)\n    - 최홍배 (세종대학교, 은하 연구/우주 먼지)\n    - 장홍재 (강원대학교 화학과)\n";
+    let msgs2 = vec![
+        json!({"role":"system","content": msgs[0]["content"]}),
+        json!({"role":"user","content":"지웅배야 최홍배가아니라"}),
+        json!({
+            "role": "assistant", "content": serde_json::Value::Null,
+            "tool_calls": [{ "id": "call_rm2", "type": "function",
+                "function": { "name": "read_minutes", "arguments": "{}" } }],
+        }),
+        json!({
+            "role": "tool", "tool_call_id": "call_rm2",
+            "content": json!({ "ok": true, "content": body2 }).to_string(),
+        }),
+    ];
+    let turn2 = ai::chat_with_tools(&llm, &msgs2, &ff_tools).await.expect("correction turn");
+    let em2 = turn2
+        .tool_calls
+        .iter()
+        .find(|t| t.name == "edit_minutes")
+        .expect("name correction must call edit_minutes");
+    let edits2 = em2.args["edits"].as_array().cloned().unwrap_or_default();
+    eprintln!("[ff-e2e] correction edits={}", serde_json::to_string(&edits2).unwrap());
+    let (fixed2, _d2, errs2) = crate::chat::edit::apply_str_edits(body2, &edits2);
+    assert!(errs2.is_empty(), "correction edits failed to apply: {errs2:?}");
+    assert!(
+        fixed2.contains("지웅배") && !fixed2.contains("최홍배"),
+        "정정 방향 오류 — 본문의 최홍배가 지웅배로 바뀌어야 함:\n{fixed2}"
+    );
+
+    // --- 2) 새 내용 → write_note / 잡담 → 무도구 ---
+    let cases: &[(&str, &[&str])] = &[
+        ("다음 회의는 수요일 3시로 확정", &["write_note"]),
+        ("아 배고프다 점심 뭐먹지", &[]),
+    ];
+    for (utterance, expected) in cases {
+        let msgs = vec![
+            json!({"role":"system","content": msgs[0]["content"]}),
+            json!({"role":"user","content": utterance}),
+        ];
+        let t2 = ai::chat_with_tools(&llm, &msgs, &ff_tools).await.expect("turn");
+        let got: Vec<&str> = t2.tool_calls.iter().map(|t| t.name.as_str()).collect();
+        let ok = if expected.is_empty() {
+            got.is_empty()
+        } else {
+            got.iter().any(|g| expected.contains(g))
+        };
+        eprintln!(
+            "[ff-e2e] {:?} → {:?} (expect {:?}) {}",
+            utterance, got, expected, if ok { "PASS" } else { "FAIL" }
+        );
+        assert!(ok, "freeform routing failed for {utterance:?}");
+    }
+    eprintln!("[ff-e2e] freeform behaviors passed");
 }
 
 /// Seed a done-stage test note (recording + completed transcript + completed
@@ -402,57 +532,39 @@ async fn seed_test_note() {
     .await
     .expect("insert transcript");
 
-    // Body file + completed row → done stage.
-    let body_html = r##"<!DOCTYPE html>
-<html>
-<head>
-<style>
-  body { font-family: -apple-system, 'Pretendard', 'Noto Sans KR', sans-serif; line-height: 1.75; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 0; font-size: 15px; background: #fff; }
-  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; color: #111; }
-  .meeting-meta { font-size: 14px; color: #666; margin-bottom: 32px; padding-bottom: 16px; border-bottom: 1px solid #e5e5e5; }
-  h2 { font-size: 17px; font-weight: 700; color: #111; margin-top: 28px; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid #e5e5e5; }
-  ul { margin: 0 0 16px 0; padding-left: 20px; }
-  li { margin-bottom: 4px; color: #333; }
-  .section-label { font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 32px; margin-bottom: 8px; }
-</style>
-</head>
-<body>
-  <h1>제품 출시 준비 회의</h1>
-  <div class="meeting-meta">2026-05-26</div>
-  <h2>1. 신규 기능 범위</h2>
-  <ul>
-    <li>AI 자동 요약 기능 도입 결정함</li>
-    <li>실시간 협업 편집은 이번 출시 범위에서 제외, 다음 분기 검토 예정</li>
-    <li>모바일은 반응형으로 우선 대응하기로 함</li>
-  </ul>
-  <h2>2. 일정 및 리소스</h2>
-  <ul>
-    <li>출시 목표 6월 말로 합의함</li>
-    <li>QA 기간 최소 2주 확보 필요</li>
-    <li>프론트 인력 1명 추가 충원 논의됨 (결론 미정)</li>
-  </ul>
-  <h2>3. 리스크</h2>
-  <ul>
-    <li>외부 ASR API 비용 급증 가능성 → 사용량 모니터링 대시보드 필요</li>
-    <li>개인정보 처리방침 업데이트 법무 검토 대기 중</li>
-  </ul>
-  <p class="section-label">결정 사항</p>
-  <ul>
-    <li>AI 자동 요약 도입 / 실시간 협업 편집 보류</li>
-    <li>6월 말 출시 목표 확정</li>
-  </ul>
-  <p class="section-label">후속 조치</p>
-  <ul>
-    <li>김개발 — QA 일정 수립, 6/2까지</li>
-    <li>박기획 — 개인정보 처리방침 법무 검토 요청, 금주 내</li>
-  </ul>
-</body>
-</html>"##;
-    let bdir = app_data.join("note_bodies").join(&body_id);
-    std::fs::create_dir_all(&bdir).expect("mk body dir");
-    let bpath = bdir.join("content.html");
-    std::fs::write(&bpath, body_html).expect("write body");
-    let bpath_str = bpath.to_string_lossy().to_string();
+    // Body file + completed row → done stage. 마크다운 본문(디자인은 테마가 담당).
+    let body_md = r##"# 제품 출시 준비 회의
+
+2026-05-26
+
+## 1. 신규 기능 범위
+
+- AI 자동 요약 기능 도입 결정함
+- 실시간 협업 편집은 이번 출시 범위에서 제외, 다음 분기 검토 예정
+- 모바일은 반응형으로 우선 대응하기로 함
+
+## 2. 일정 및 리소스
+
+- 출시 목표 6월 말로 합의함
+- QA 기간 최소 2주 확보 필요
+- 프론트 인력 1명 추가 충원 논의됨 (결론 미정)
+
+3. 리스크 섹션과 후속 조치는 아래 참고.
+
+## 3. 리스크
+
+- 외부 ASR API 비용 급증 가능성 → 사용량 모니터링 대시보드 필요
+- 개인정보 처리방침 업데이트 법무 검토 대기 중
+
+**결정**: AI 자동 요약 도입 / 실시간 협업 편집 보류, 6월 말 출시 목표 확정.
+
+**후속**: 김개발 — QA 일정 수립(6/2까지), 박기획 — 개인정보 처리방침 법무 검토 요청(금주 내).
+"##;
+    let bpath_rel = crate::storage::body_rel(&note_id, &body_id, "md");
+    let bpath = app_data.join(&bpath_rel);
+    std::fs::create_dir_all(bpath.parent().unwrap()).expect("mk body dir");
+    std::fs::write(&bpath, body_md).expect("write body");
+    let bpath_str = bpath_rel;
     let ctx = json!({
         "title": "테스트 노트 — refine 검증",
         "description": null,
@@ -527,6 +639,7 @@ async fn manual_edit_creates_active_manual_version() {
         Some("/tmp/orig.html"),
         Some("{}"),
         true,
+        None,
     )
     .await
     .expect("manual edit archive+create");

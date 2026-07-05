@@ -107,7 +107,7 @@ pub async fn restore_note_body(
     let transcript_id = src.transcript_id.clone();
 
     let new_id = Uuid::new_v4().to_string();
-    let content_rel = crate::storage::body_rel(&note_id, &new_id);
+    let content_rel = crate::storage::body_rel(&note_id, &new_id, crate::storage::body_ext_for(&html));
     let path = crate::storage::resolve(&content_rel);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -124,6 +124,7 @@ pub async fn restore_note_body(
         initial_content.as_deref(),
         initial_ctx.as_deref(),
         false,
+        None,
     )
     .await?;
     Ok(())
@@ -158,7 +159,7 @@ pub async fn save_manual_body_edit(
     };
 
     let new_id = Uuid::new_v4().to_string();
-    let content_rel = crate::storage::body_rel(&note_id, &new_id);
+    let content_rel = crate::storage::body_rel(&note_id, &new_id, crate::storage::body_ext_for(&html));
     let path = crate::storage::resolve(&content_rel);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -175,6 +176,7 @@ pub async fn save_manual_body_edit(
         initial_content.as_deref(),
         initial_ctx.as_deref(),
         true,
+        None,
     )
     .await?;
     Ok(())

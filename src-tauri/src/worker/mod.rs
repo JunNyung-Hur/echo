@@ -36,8 +36,8 @@ pub mod transcribe;
 /// runtime thread (which would delay the next chain step + make the toast feel
 /// laggy relative to completion).
 pub async fn notify(app: &AppHandle, pool: &sqlx::SqlitePool, pref_key: &str, title: &str, body: &str) {
-    // 사용자가 끈 알림("0")은 보내지 않는다 — 설정이 없으면 기본 on.
-    if matches!(crate::repo::settings::get(pool, pref_key).await, Ok(Some(v)) if v == "0") {
+    // 알림은 **기본 off** — 설정에서 명시적으로 켠 경우("1")에만 보낸다.
+    if !matches!(crate::repo::settings::get(pool, pref_key).await, Ok(Some(v)) if v == "1") {
         return;
     }
     let app = app.clone();

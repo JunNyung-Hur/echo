@@ -33,7 +33,12 @@ pub struct UpdateNoteInput {
     pub started_at: Option<Option<String>>,
     /// "minutes" | "freeform" — 유형 선택 시 한 번 설정(이후 고정).
     pub note_type: Option<String>,
+    /// 본문 렌더 테마 프리셋 id (default / notepad / report / colorful).
+    pub theme: Option<String>,
 }
+
+/// 프론트 프리셋 레지스트리(lib/themes.ts)와 1:1 — 값 검증용.
+const THEME_IDS: [&str; 4] = ["default", "notepad", "report", "colorful"];
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ListNotesQuery {
@@ -170,6 +175,13 @@ pub async fn update(pool: &SqlitePool, id: &str, input: UpdateNoteInput) -> Resu
     }
     if let Some(v) = &input.note_type {
         add(&mut qb, &mut first, "note_type");
+        qb.push_bind(v);
+    }
+    if let Some(v) = &input.theme {
+        if !THEME_IDS.contains(&v.as_str()) {
+            return Err(Error::InvalidInput(format!("theme: {v}")));
+        }
+        add(&mut qb, &mut first, "theme");
         qb.push_bind(v);
     }
 

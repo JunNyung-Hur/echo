@@ -11,6 +11,8 @@ export interface Note {
   source_type: string;
   /** "minutes" | "freeform" — null = 미선택(진입 시 유형 선택). 선택 후 고정. */
   note_type: string | null;
+  /** 본문 렌더 테마 프리셋 id (lib/themes.ts) — default/notepad/report/colorful. */
+  theme: string;
   created_at: string;
   updated_at: string;
 }
@@ -52,6 +54,7 @@ export interface UpdateNoteInput {
   language?: string;
   started_at?: string | null;
   note_type?: string;
+  theme?: string;
 }
 
 export interface ListNotesQuery {

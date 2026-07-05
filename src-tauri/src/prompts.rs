@@ -6,10 +6,11 @@
 
 #![allow(dead_code)] // Phase 2: consumed by transcribe (normalizer) + generate.
 
-/// Stage-1 minutes generation (개조식 HTML, content-proportional sizing).
-/// Source: worker/app/prompts/minutes.py `MINUTES_SYSTEM_PROMPT` (c32ce3f rule2
-/// 템플릿 + e3d01f5 EN). 본문엔 `__RULE2__` 자리표시자만 두고 언어별 rule 2를
-/// `minutes_system_prompt`가 끼운다. KO는 .md 원본과 byte-identical.
+/// Stage-1 minutes generation (개조식 **마크다운**, content-proportional sizing).
+/// Source: worker/app/prompts/minutes.py `MINUTES_SYSTEM_PROMPT` @ Meetzy d75150c
+/// (마크다운 전환 ab0ba14 + 제목 rule 6 + ASR 표기 통일 #7). 본문엔 `__RULE2__`
+/// 자리표시자만 두고 언어별 rule 2를 `minutes_system_prompt`가 끼운다.
+/// 도메인 워딩만 회의록→노트로 옮긴 것 외에는 Meetzy 원문 그대로.
 const MINUTES_SYSTEM_PROMPT_TEMPLATE: &str = include_str!("prompts/minutes_system.md");
 
 // rule 2(출력 언어)의 단일 출처. KO 문구는 `.md`의 원래 rule 2와 글자 단위로
@@ -37,6 +38,5 @@ pub fn minutes_system_prompt(target_lang: &str) -> String {
 pub const MINUTES_ONE_LINE_SUMMARY_PROMPT: &str =
     include_str!("prompts/minutes_one_line_summary.md");
 
-/// Stage-2 refine (body/style channel split, decisive reshape).
-/// Source: worker/app/prompts/minutes.py `MINUTES_REFINE_SYSTEM_PROMPT`.
-pub const MINUTES_REFINE_SYSTEM_PROMPT: &str = include_str!("prompts/minutes_refine.md");
+// Stage-2 refine 프롬프트는 2차 싱크에서 폐기 — 편집은 chat/exec.rs 의
+// edit_minutes(str_replace)가 담당한다 (Meetzy 992249c·6d3d07c).

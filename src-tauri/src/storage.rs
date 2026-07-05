@@ -72,6 +72,18 @@ pub fn transcript_chunks_rel(note_id: &str, transcript_id: &str) -> String {
     format!("{}/transcripts/{}.chunks", note_rel_dir(note_id), transcript_id)
 }
 
-pub fn body_rel(note_id: &str, body_id: &str) -> String {
-    format!("{}/bodies/{}.html", note_rel_dir(note_id), body_id)
+/// `ext`: "md"(마크다운 — 신규 본문) 또는 "html"(레거시/freeform 조각). 형식
+/// 판별은 어디서든 내용 기준(body_ext_for)이라 확장자는 폴더 열람 UX용이다.
+pub fn body_rel(note_id: &str, body_id: &str, ext: &str) -> String {
+    format!("{}/bodies/{}.{}", note_rel_dir(note_id), body_id, ext)
+}
+
+/// 본문 내용으로 저장 확장자를 정한다 — '<'로 시작하면 HTML(레거시 full doc /
+/// freeform 조각), 아니면 마크다운.
+pub fn body_ext_for(content: &str) -> &'static str {
+    if content.trim_start().starts_with('<') {
+        "html"
+    } else {
+        "md"
+    }
 }

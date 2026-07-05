@@ -115,6 +115,7 @@ pub async fn archive_and_create_completed(
     initial_content_path: Option<&str>,
     initial_context_snapshot: Option<&str>,
     is_manual: bool,
+    refine_request: Option<&str>,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     sqlx::query("UPDATE note_bodies SET archived = 1 WHERE note_id = ? AND archived = 0")
@@ -123,8 +124,8 @@ pub async fn archive_and_create_completed(
         .await?;
     sqlx::query(
         "INSERT INTO note_bodies \
-         (id, note_id, transcript_id, content_path, status, context_snapshot, initial_content_path, initial_context_snapshot, is_manual_edit) \
-         VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?)",
+         (id, note_id, transcript_id, content_path, status, context_snapshot, initial_content_path, initial_context_snapshot, is_manual_edit, refine_request) \
+         VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(note_id)
@@ -134,6 +135,7 @@ pub async fn archive_and_create_completed(
     .bind(initial_content_path)
     .bind(initial_context_snapshot)
     .bind(is_manual as i64)
+    .bind(refine_request)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

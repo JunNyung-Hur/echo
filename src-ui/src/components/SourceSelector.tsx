@@ -188,7 +188,8 @@ function InputSourcePanel({
   const t = useT();
   return (
     <div>
-      <p className={CAPTION_CLS}>{t("source.select")}</p>
+      <p className="text-sm font-medium text-gray-900 mb-1">{t("source.select")}</p>
+      <p className="text-xs text-gray-500 mb-4">{t("source.select.caption")}</p>
       <SourceDropdown
         devices={devices}
         selected={selected}
@@ -200,7 +201,8 @@ function InputSourcePanel({
 
       <hr className="my-5 border-gray-100" />
 
-      <p className={CAPTION_CLS}>{t("source.test")}</p>
+      <p className="text-sm font-medium text-gray-900 mb-1">{t("source.test")}</p>
+      <p className="text-xs text-gray-500 mb-4">{t("source.test.caption")}</p>
       {selected ? (
         <InputTestBody source={selected} />
       ) : (

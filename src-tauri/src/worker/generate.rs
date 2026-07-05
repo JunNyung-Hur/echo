@@ -31,11 +31,30 @@ use crate::worker::{check_cancelled, TASK_TIME_LIMIT};
 use crate::AppState;
 
 pub(crate) fn build_meeting_info(note: &Note) -> String {
+    build_meeting_info_inner(note, false)
+}
+
+/// 초기 생성 경로 전용 — 사용자가 미리 지은 *진짜* 제목이 있으면 "Suggested title"
+/// 힌트로 주입한다(프롬프트 rule 6이 시작점으로 삼음). 제목은 본문 `# ` 헤딩에서
+/// 역파생되므로 평문 "Title:"로 주면 LLM이 echo해 파생이 무력화된다 (Meetzy
+/// build_meeting_info(suggest_title=True) 이식).
+pub(crate) fn build_meeting_info_suggest_title(note: &Note) -> String {
+    build_meeting_info_inner(note, true)
+}
+
+fn build_meeting_info_inner(note: &Note, suggest_title: bool) -> String {
     let mut s = String::new();
-    // 기본 제목("제목 없음"/"Untitled")은 넘기지 않는다 — 그러면 LLM이 그걸 h1 제목으로
-    // 그대로 박아 "제목 없음" 회의록이 된다. 제목이 비면 LLM이 내용에서 직접 짓게 한다.
+    // 기본 제목("제목 없음"/"Untitled")은 넘기지 않는다 — 그러면 LLM이 그걸 제목으로
+    // 그대로 박아 "제목 없음" 노트가 된다. 제목이 비면 LLM이 내용에서 직접 짓게 한다.
     let t = note.title.trim();
-    if !t.is_empty() && t != "제목 없음" && t != "Untitled" {
+    let placeholder = t.is_empty() || t == "제목 없음" || t == "(제목 없음)" || t == "Untitled";
+    if suggest_title {
+        if !placeholder {
+            s.push_str(&format!(
+                "Suggested title (use as a starting point and adapt it to what was actually discussed): {t}\n"
+            ));
+        }
+    } else if !placeholder {
         s.push_str(&format!("Title: {t}\n"));
     }
     if let Some(started) = &note.started_at {
@@ -57,6 +76,21 @@ pub(crate) fn build_meeting_info(note: &Note) -> String {
         }
     }
     s
+}
+
+/// 모델이 마크다운 본문 전체를 ```markdown 펜스로 감싸 반환하는 경우 벗긴다.
+/// (펜스가 본문 *일부*면 그대로 둔다 — 시작·끝이 모두 펜스일 때만.)
+fn strip_md_fence(s: &str) -> String {
+    let t = s.trim();
+    if let Some(rest) = t.strip_prefix("```") {
+        if let Some(nl) = rest.find('\n') {
+            let inner = &rest[nl + 1..];
+            if let Some(body) = inner.strip_suffix("```") {
+                return body.trim_end().to_string();
+            }
+        }
+    }
+    t.to_string()
 }
 
 /// G-DB-001 — context_snapshot is NOT NULL + valid JSON.
@@ -201,7 +235,7 @@ async fn run(
 
     let transcript_text =
         tokio::fs::read_to_string(crate::storage::resolve(&transcript_path)).await?;
-    let meeting_info = build_meeting_info(&note);
+    let meeting_info = build_meeting_info_suggest_title(&note);
 
     // e3d01f5 — 노트 출력 언어 = ui_lang(설정). 전사 언어와 달라도 이 언어로 작성(번역).
     let ui_lang = crate::repo::settings::get(&pool, "ui_lang").await.ok().flatten();
@@ -220,33 +254,35 @@ async fn run(
 
     let system_content = prompts::minutes_system_prompt(target_lang);
     let result = ai::chat_completion(&llm_ep, &system_content, &user_content).await?;
-    let minutes_html = result.content;
-    if minutes_html.trim().is_empty() {
+    // 마크다운 본문 (레거시는 HTML — 형식 판별은 내용 기준). 코드펜스로 감싸 나오면 벗긴다.
+    let minutes_md = strip_md_fence(&result.content);
+    if minutes_md.trim().is_empty() {
         return Err(Error::Other("LLM produced empty minutes".into()));
     }
 
     // Persist content + complete (G-TASK-007 initial capture handled in repo).
     // Note-centric storage — body lives under the note's folder; store the
     // app_data-relative path.
-    let content_rel = crate::storage::body_rel(&body.note_id, &body_id);
+    let content_rel =
+        crate::storage::body_rel(&body.note_id, &body_id, crate::storage::body_ext_for(&minutes_md));
     let content_path = crate::storage::resolve(&content_rel);
     if let Some(parent) = content_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(&content_path, minutes_html.as_bytes()).await?;
+    tokio::fs::write(&content_path, minutes_md.as_bytes()).await?;
     note_bodies::set_content_and_complete(&pool, &body_id, &content_rel).await?;
-    // 제목=본문 첫 줄 (freeform write_note와 동일 규칙). minutes도 생성된 본문에서 제목을 도출해
-    // notes.title을 갱신한다 — 안 하면 "(제목 없음)" 기본값이 그대로 남는다.
+    // 제목=본문 `# ` 헤딩 (extract_title이 마크다운 우선 파생). 안 하면 "(제목 없음)"
+    // 기본값이 그대로 남는다.
     let _ = notes::update(
         &pool,
         &body.note_id,
         notes::UpdateNoteInput {
-            title: Some(crate::chat::refine::extract_title(&minutes_html)),
+            title: Some(crate::chat::refine::extract_title(&minutes_md)),
             ..Default::default()
         },
     )
     .await;
-    tracing::info!(%body_id, chars = minutes_html.len(), "generate: completed");
+    tracing::info!(%body_id, chars = minutes_md.len(), "generate: completed");
     let _ = timeline::post(
         &pool,
         &body.note_id,
@@ -269,7 +305,7 @@ async fn run(
         if let Ok(r) = ai::chat_completion(
             &llm_ep,
             prompts::MINUTES_ONE_LINE_SUMMARY_PROMPT,
-            &format!("[Minutes]\n{minutes_html}"),
+            &format!("[Minutes]\n{minutes_md}"),
         )
         .await
         {

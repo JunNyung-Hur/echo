@@ -55,7 +55,7 @@ async fn attach_recordings(pool: &SqlitePool, msgs: &mut [ChatMessage]) -> Resul
 }
 
 /// Persist one chat row. `tool_calls_json` = JSON array of {id,name,args,result}
-/// for an assistant turn that called tools (G-SSE-001), else None.
+/// (레거시 하위호환), `parts_json` = 발생 순서 보존 [text/tool/ask] 블록 배열.
 pub async fn create(
     pool: &SqlitePool,
     note_id: &str,
@@ -63,11 +63,12 @@ pub async fn create(
     content: &str,
     tool_calls_json: Option<&str>,
     body_version_id: Option<&str>,
+    parts_json: Option<&str>,
 ) -> Result<String> {
     let id = Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO note_chat_messages (id, note_id, role, content, tool_calls, note_body_version_id) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO note_chat_messages (id, note_id, role, content, tool_calls, note_body_version_id, parts) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(note_id)
@@ -75,6 +76,7 @@ pub async fn create(
     .bind(content)
     .bind(tool_calls_json)
     .bind(body_version_id)
+    .bind(parts_json)
     .execute(pool)
     .await?;
     Ok(id)

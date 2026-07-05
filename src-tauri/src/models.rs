@@ -21,6 +21,9 @@ pub struct Note {
     pub source_type: String,
     /// "minutes" | "freeform" — null = 미선택(진입 시 유형 선택). 선택 후 고정.
     pub note_type: Option<String>,
+    /// 본문 렌더 테마 프리셋 id (default / notepad / report / colorful). 본문은
+    /// 순수 마크다운(신규)이고 디자인은 프론트 소유 프리셋 CSS가 담당한다.
+    pub theme: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -115,6 +118,8 @@ pub struct NoteBody {
     /// G-VERSION-002/003 — archive-and-create + manual edit flag.
     pub archived: i64,
     pub is_manual_edit: i64,
+    /// 이 버전을 만든 사용자 요청(edit_minutes user_request) — 편집 근거 기록.
+    pub refine_request: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -134,8 +139,11 @@ pub struct ChatMessage {
     pub content: String,
     /// G-SSE-005 — "이 시점 노트 보기" chip linkage.
     pub note_body_version_id: Option<String>,
-    /// G-SSE-001 — JSON [{id,name,args,result}] for turn-merge persistence.
+    /// G-SSE-001 — JSON [{id,name,args,result}] (레거시 하위호환; parts에서 파생).
     pub tool_calls: Option<String>,
+    /// 발생 순서 보존 [text/tool/ask] 블록 JSON 배열 — 한 전송의 assistant 응답
+    /// 전체를 한 행에 담는다. 히스토리 직렬화·카드 렌더의 단일 소스 (d75150c).
+    pub parts: Option<String>,
     pub created_at: String,
     /// Step 4: recordings this user message sent (filled by chat::list_for_note;
     /// sqlx-skipped — not a real column). Rendered as chips in the bubble.
@@ -178,6 +186,8 @@ pub struct AiEndpoint {
     pub request_mode: String,
     pub chunk_seconds: Option<i64>,
     pub max_tokens: Option<i64>,
+    /// b7ba31c — thinking 비활성화(chat_template_kwargs.enable_thinking=false).
+    pub disable_thinking: i64,
     pub is_active: i64,
     pub created_at: String,
     pub updated_at: String,

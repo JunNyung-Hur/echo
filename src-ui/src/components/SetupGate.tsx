@@ -7,6 +7,8 @@ import { useLang, LANGS } from "@/i18n/LangContext";
 import { type Lang } from "@/i18n/dict";
 import { settingsApi } from "@/api/settings";
 import { endpointsApi, type EndpointKind } from "@/api/endpoints";
+import { ThemeThumb } from "@/components/ThemeThumb";
+import { THEMES } from "@/lib/themes";
 
 type Phase = "checking" | "lang" | "setup" | "done" | "ready";
 
@@ -18,7 +20,8 @@ type Phase = "checking" | "lang" | "setup" | "done" | "ready";
  * After the first completion, models are managed in Settings — deleting them
  * never re-triggers the gate. ASR is optional (skippable); only an LLM is
  * needed to finish. Installer-style steps share the `echo` wordmark:
- *   Step 1 language → Step 2 LLM wizard → Step 3 ASR wizard (skippable) → done.
+ *   Step 1 language → Step 2 LLM wizard → Step 3 ASR wizard (skippable)
+ *   → Step 4 note style → done.
  */
 export default function SetupGate({ children }: { children: ReactNode }) {
   const { setLang } = useLang();
@@ -38,8 +41,15 @@ export default function SetupGate({ children }: { children: ReactNode }) {
       }
       // 첫 셋업을 한 번 끝냈으면 이후엔 모델을 지워도 게이트를 다시 띄우지 않는다.
       // (모델 관리는 설정 화면에서 한다.)
-      if ((await settingsApi.get("setup_completed")) === "1") {
+      const completed = await settingsApi.get("setup_completed");
+      if (completed === "1") {
         setPhase("ready");
+        return;
+      }
+      // dev 스위치 — "0"으로 명시하면 활성 LLM이 있어도 게이트를 강제로 띄운다
+      // (아래 소급-완료 처리를 건너뜀). 셋업 플로우 확인용.
+      if (completed === "0") {
+        setPhase("setup");
         return;
       }
       // 플래그는 없지만 이미 활성 LLM이 있는 기존 사용자는 '완료'로 소급 처리.
@@ -240,7 +250,6 @@ function LanguageScreen({ onNext }: { onNext: (code: Lang) => void }) {
               key={l.code}
               type="button"
               onClick={() => setSelected(l.code)}
-              onDoubleClick={() => onNext(l.code)}
               className={`block w-full text-left px-4 py-2.5 text-sm border-0 cursor-pointer transition-colors ${
                 selected === l.code
                   ? "bg-sky-500 text-white"
@@ -326,8 +335,10 @@ type RenderFrame = (parts: { body: ReactNode; footer: ReactNode }) => ReactNode;
 function ModelSetupScreen({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
   const { lang } = useLang();
   const en = lang === "en";
-  const [sub, setSub] = useState<"llm" | "asr">("llm");
+  const [sub, setSub] = useState<"llm" | "asr" | "style">("llm");
   const [llmForm, setLlmForm] = useState<EpForm | null>(null);
+  const [asrForm, setAsrForm] = useState<EpForm | null>(null);
+  const [style, setStyle] = useState("notepad");
   const [submitting, setSubmitting] = useState(false);
 
   const setupFrame =
@@ -357,8 +368,8 @@ function ModelSetupScreen({ onBack, onDone }: { onBack: () => void; onDone: () =
     );
   }
 
-  // asrForm null = ASR 건너뛰기 (LLM만 등록).
-  async function finish(asrForm: EpForm | null) {
+  // 마지막 단계(노트 스타일 선택)에서 한 번에 저장. asrForm null = ASR 건너뜀.
+  async function finish(styleOverride?: string) {
     if (!llmForm || submitting) return;
     setSubmitting(true);
     try {
@@ -368,6 +379,7 @@ function ModelSetupScreen({ onBack, onDone }: { onBack: () => void; onDone: () =
         const a = await endpointsApi.create({ kind: "asr", ...asrForm });
         await endpointsApi.activate(a.id);
       }
+      await settingsApi.set("default_theme_freeform", styleOverride ?? style);
       await settingsApi.set("setup_completed", "1");
       onDone();
     } catch (e) {
@@ -376,21 +388,95 @@ function ModelSetupScreen({ onBack, onDone }: { onBack: () => void; onDone: () =
     }
   }
 
+  if (sub === "asr") {
+    return (
+      <AsrWizard
+        finishLabel="next"
+        showSkip
+        onSkip={() => {
+          setAsrForm(null);
+          setSub("style");
+        }}
+        renderFrame={setupFrame(
+          "Step 3",
+          en
+            ? "Connect a speech-to-text model. (Optional — recording is unavailable without it)"
+            : "음성 인식 모델을 연결하는 단계에요. (선택 · 미설정 시 녹음 기능을 사용할 수 없어요)",
+        )}
+        onBack={() => setSub("llm")}
+        onComplete={(f) => {
+          setAsrForm(f);
+          setSub("style");
+        }}
+      />
+    );
+  }
+
+  // Step 4 — 노트 스타일. 썸네일 클릭=선택(포커스), 진행은 완료 버튼으로만.
   return (
-    <AsrWizard
-      finishLabel="done"
-      submitting={submitting}
-      showSkip
-      onSkip={() => finish(null)}
-      renderFrame={setupFrame(
-        "Step 3",
+    <SetupStep
+      step="Step 4"
+      desc={
         en
-          ? "Connect a speech-to-text model. (Optional — recording is unavailable without it)"
-          : "음성 인식 모델을 연결하는 단계에요. (선택 · 미설정 시 녹음 기능을 사용할 수 없어요)",
-      )}
-      onBack={() => setSub("llm")}
-      onComplete={(f) => finish(f)}
-    />
+          ? "Pick the default style for your notes."
+          : "노트에 적용될 기본 스타일을 골라 주세요."
+      }
+      footer={
+        <>
+          <button type="button" onClick={() => setSub("asr")} className={ghostBtn}>
+            {en ? "Back" : "뒤로"}
+          </button>
+          <button
+            type="button"
+            onClick={() => finish()}
+            disabled={submitting}
+            className={primaryBtn}
+          >
+            {submitting ? (en ? "Saving…" : "저장 중…") : en ? "Done" : "완료"}
+          </button>
+        </>
+      }
+    >
+      <CenteredAsk
+        question={en ? "Which note style do you like?" : "어떤 노트 스타일이 좋으세요?"}
+        hint={
+          en
+            ? "Applied to new freeform notes. You can change it anytime in Settings."
+            : "노트 필기형 새 노트에 적용돼요. 설정에서 언제든 바꿀 수 있어요."
+        }
+      >
+        <div className="flex gap-4 justify-center">
+          {THEMES.map((th) => {
+            const active = style === th.id;
+            return (
+              <button
+                key={th.id}
+                type="button"
+                onClick={() => setStyle(th.id)}
+                className="flex flex-col items-center gap-2 bg-transparent border-0 cursor-pointer p-0 group"
+              >
+                <div
+                  className={`rounded-xl p-1 transition-all ${
+                    active
+                      ? "ring-2 ring-sky-500 bg-sky-50"
+                      : "ring-1 ring-transparent group-hover:ring-gray-300"
+                  }`}
+                >
+                  <ThemeThumb themeId={th.id} width={104} />
+                </div>
+                <span
+                  className={`text-xs font-medium ${
+                    active ? "text-sky-700" : "text-gray-600 group-hover:text-gray-900"
+                  }`}
+                >
+                  {en ? th.nameEn : th.nameKo}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </CenteredAsk>
+    </SetupStep>
   );
 }
 
@@ -770,7 +856,7 @@ function AsrWizard({
   renderFrame: RenderFrame;
   onBack: () => void;
   onComplete: (f: EpForm | null) => void;
-  finishLabel: "done" | "add";
+  finishLabel: "done" | "add" | "next";
   submitting?: boolean;
   showSkip?: boolean;
   onSkip?: () => void;
@@ -870,7 +956,8 @@ function AsrWizard({
     }
   })();
 
-  const finishText = finishLabel === "add" ? tx("추가", "Add") : tx("완료", "Done");
+  const finishText =
+    finishLabel === "add" ? tx("추가", "Add") : finishLabel === "next" ? tx("다음", "Next") : tx("완료", "Done");
 
   const footer = (
     <>
