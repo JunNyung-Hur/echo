@@ -100,9 +100,22 @@ pub async fn create(pool: &SqlitePool, input: CreateNoteInput) -> Result<Note> {
     // so "open folder" works even before any artifact is written.
     let _ = std::fs::create_dir_all(crate::storage::note_abs_dir(&id));
 
+    // 기본 스타일은 생성 시점에 서버가 결정한다 — 목록 페이지처럼 note_type 을
+    // 생성과 동시에 지정하는 경로도 커버(유형 선택 화면을 안 거침).
+    // freeform=설정(default_theme_freeform, 없으면 notepad) / 그 외=default.
+    let theme = match input.note_type.as_deref() {
+        Some("freeform") => crate::repo::settings::get(pool, "default_theme_freeform")
+            .await
+            .ok()
+            .flatten()
+            .filter(|v| THEME_IDS.contains(&v.as_str()))
+            .unwrap_or_else(|| "notepad".to_string()),
+        _ => "default".to_string(),
+    };
+
     sqlx::query(
-        "INSERT INTO notes (id, title, description, location, language, started_at, note_type) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO notes (id, title, description, location, language, started_at, note_type, theme) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&title)
@@ -111,6 +124,7 @@ pub async fn create(pool: &SqlitePool, input: CreateNoteInput) -> Result<Note> {
     .bind(&language)
     .bind(&input.started_at)
     .bind(&input.note_type)
+    .bind(&theme)
     .execute(pool)
     .await?;
 
