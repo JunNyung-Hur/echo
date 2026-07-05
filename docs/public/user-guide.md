@@ -30,6 +30,7 @@ On first launch you go through a short setup:
 
 1. **Language** — Korean / English. This becomes the default for both the app UI and the AI output language (changeable later in Settings).
 2. **Register your AI models** — echo doesn't bundle any AI; you connect your own OpenAI-compatible endpoints. Register one for transcription (**ASR**) and one for organizing/chat (**LLM**). A cloud API key or a local server (vLLM, etc.) both work, the same way.
+3. **Pick a note style** — choose the default look for your freeform notes from live thumbnails (Minimal / Notepad / Report / Colorful). Changeable later in Settings → Note style.
 
 > Until both endpoints are set, recording/transcription and note generation can't run.
 
@@ -72,7 +73,9 @@ A freeform note is a notepad (the page on the right) with an AI agent chat besid
 
 ### 4.1 Writing by chat
 
-Type what you want to note and send it. The agent writes it into the note in a clean, jotted style. Ask it to keep going, tidy the wording, restructure into sections, summarize, or correct something — it edits the note in place and keeps what's already there. You can also edit the notepad directly.
+Type what you want to note and send it. The agent writes it into the note in a clean, jotted style. Ask it to keep going, tidy the wording, restructure into sections, summarize, or correct something — small fixes are applied as precise in-place edits (you can expand the edit card in chat to see a red/green diff), and everything already there is kept. You can also edit the notepad directly.
+
+The notepad's look is a **note style** — switch it anytime from the *Note style* button in the body header (Minimal / Notepad / Report / Colorful), or just ask the agent ("make it colorful").
 
 ### 4.2 Attaching voice & audio
 
@@ -84,7 +87,7 @@ In the chat input you can attach audio, as many pieces as you like before sendin
 
 Each attachment shows up as a chip with its length and a play button. Remove one with × (it asks first, since it deletes the file).
 
-When you **send**, echo transcribes each attachment and weaves the content into your note — cleaning up the spoken wording and, when topics differ, separating them into sections. Your existing note is treated as one of the inputs, so nothing already there is lost. While it works, the chat shows progress: **transcribing → drafting → merging**.
+When you **send**, echo transcribes each attachment and weaves the content into your note — cleaning up the spoken wording and, when topics differ, separating them into sections. Your existing note is treated as one of the inputs, so nothing already there is lost. While it works, the chat shows live step cards — one per recording being transcribed, then a *Write note* step.
 
 ### 4.3 The recording archive
 
