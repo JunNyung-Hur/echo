@@ -2,7 +2,7 @@
 
 | Version | Notes |
 |---|---|
-| [0.0.4](0.0.4.md) | In preparation: source-grounded editing, transcription recovery, and response validation |
+| [0.0.4](0.0.4.md) | Source-grounded editing, transcription recovery, and response validation |
 | [0.0.3](0.0.3.md) | Chat agent rebuild, Markdown notes, and note styles |
 | [0.0.2](0.0.2.md) | Earlier release notes |
 | [0.0.1](0.0.1.md) | Initial release notes |
