@@ -21,7 +21,7 @@ The note's shape and length adjust to the input.
 - **Freeform** — a chat-first notepad you grow by typing and by attaching voice/audio that echo transcribes and weaves into the note.
 
 ### Q. Do I need an account or server?
-No. It's single-user with no login, and all data is stored in local SQLite on your device.
+No echo account or hosted echo backend is required. Metadata is stored in local SQLite; recordings, transcripts, and note bodies are local files. AI processing uses the endpoints you configure.
 
 ### Q. Is AI built in?
 No. You connect OpenAI-compatible endpoints yourself — a cloud API key or a local server like vLLM.
@@ -46,7 +46,7 @@ Ask the agent: "shorter", "more detail", "cut to 10 lines", "drop the small talk
 Tell the agent briefly and the note body is corrected — e.g., "it's Sungkyunkwan, not Seongyeonggwan".
 
 ### Q. Do my hand edits survive later refinements?
-Yes. Hand edits are preserved through later refinements, and you can roll back to any point from *History*.
+Adding new freeform content preserves existing text. Requests to rewrite, shorten, or reorganize can change it; inspect the edit diff and use *History* to restore a previous version. Stale agent edits are rejected if the note has changed since the agent read it.
 
 ### Q. I attached a recording to a freeform note and sent it, but nothing changed.
 Make sure both an **ASR** and an **LLM** endpoint are registered in Settings — transcription and organizing need both.
@@ -57,11 +57,17 @@ Yes. In-body elements (dividers, bold, tables) and genre switches are content ed
 ### Q. I can't find an old note.
 Search by title/memo/location keywords, narrow by `#tag`, or scope by date with the *date* chip. `Ctrl+K` focuses the search bar.
 
+### Q. Does retrying repeat all the transcription work?
+A failed-task retry reuses successful chunks when the recording and ASR configuration match. A failed chunk prevents the transcript from being marked complete; existing notes are preserved during recovery. Explicit full re-transcription is separate and can replace previous work.
+
+### Q. Can the agent read the original transcript?
+Yes. It can search and read completed transcripts attached to the current note, including text beyond the preview. Search uses lexical matching and is not a whole-library semantic index.
+
 ### Q. The agent sometimes can't answer.
-Usually a transient LLM-server issue. A red notice card appears in the chat and clears when you send the next message, which retries.
+Check the endpoint connection, quota, tool-calling support, and output token limit. Truncated responses and malformed tool calls are rejected. A missing source or a lexical search miss can also prevent a grounded answer; try a more specific source question.
 
 ### Q. Where is my data stored?
-Local SQLite in your app-data folder (`…/com.echo.app/echo.db`). The only thing leaving your machine is the calls to the AI endpoints you registered — point those at a local model (e.g. vLLM) and nothing leaves at all.
+Metadata is stored in SQLite in your app-data folder (`…/com.echo.app/echo.db`); recordings, transcripts, and bodies are files in that folder. Audio and text needed for AI processing are sent to your configured endpoints. Choose local endpoints if you want that processing to stay on your machine. API keys are stored locally in plaintext in this version.
 
 ---
 
@@ -70,8 +76,8 @@ Local SQLite in your app-data folder (`…/com.echo.app/echo.db`). The only thin
 ### Q. How do I run it locally?
 From the repo root:
 ```bash
-npm install                  # root: Tauri CLI
-npm --prefix src-ui install  # frontend deps
+npm ci                      # root: Tauri CLI
+npm ci --prefix src-ui      # frontend deps
 npm run dev                  # tauri dev (vite + cargo + app)
 ```
 For dev, ffmpeg on your PATH is used (the bundled binaries are release-only).

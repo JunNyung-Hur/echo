@@ -23,7 +23,7 @@ echo is a personal Second Brain desktop app. Capture anything — a meeting, a l
 
 echo is a desktop app you install on your laptop. There's no login or account; your data is stored locally on your device.
 
-1. Download and run **`echo_<version>_x64-setup.exe`**.
+1. Download **`echo_<version>_x64-setup.exe`** from [GitHub Releases](https://github.com/JunNyung-Hur/echo/releases/latest) and run it.
 2. **ffmpeg is bundled** — echo ships its own ffmpeg/ffprobe, so you don't need to install anything for audio. WebView2 is installed automatically if missing (Windows 11 already has it).
 
 On first launch you go through a short setup:
@@ -32,7 +32,7 @@ On first launch you go through a short setup:
 2. **Register your AI models** — echo doesn't bundle any AI; you connect your own OpenAI-compatible endpoints. Register one for transcription (**ASR**) and one for organizing/chat (**LLM**). A cloud API key or a local server (vLLM, etc.) both work, the same way.
 3. **Pick a note style** — choose the default look for your freeform notes from live thumbnails (Minimal / Notepad / Report / Colorful). Changeable later in Settings → Note style.
 
-> Until both endpoints are set, recording/transcription and note generation can't run.
+> Register and activate the endpoints you use. Text-only freeform chat needs an LLM; transcribing audio also needs ASR. The agent requires an LLM with tool-calling support. These docs describe source version 0.0.4; check the release notes for your installed version.
 
 ---
 
@@ -73,7 +73,7 @@ A freeform note is a notepad (the page on the right) with an AI agent chat besid
 
 ### 4.1 Writing by chat
 
-Type what you want to note and send it. The agent writes it into the note in a clean, jotted style. Ask it to keep going, tidy the wording, restructure into sections, summarize, or correct something — small fixes are applied as precise in-place edits (you can expand the edit card in chat to see a red/green diff), and everything already there is kept. You can also edit the notepad directly.
+Type what you want to note and send it. The agent writes it into the note in a clean, jotted style. Ask it to keep going, tidy the wording, restructure into sections, summarize, or correct something — small fixes are applied as precise in-place edits (you can expand the edit card in chat to see a red/green diff), and edits are stored in version history. Adding new content preserves the existing text; reorganizing or shortening a note intentionally changes it. Review the diff before relying on the result. You can also edit the notepad directly.
 
 The notepad's look is a **note style** — switch it anytime from the *Note style* button in the body header (Minimal / Notepad / Report / Colorful), or just ask the agent ("make it colorful").
 
@@ -87,7 +87,7 @@ In the chat input you can attach audio, as many pieces as you like before sendin
 
 Each attachment shows up as a chip with its length and a play button. Remove one with × (it asks first, since it deletes the file).
 
-When you **send**, echo transcribes each attachment and weaves the content into your note — cleaning up the spoken wording and, when topics differ, separating them into sections. Your existing note is treated as one of the inputs, so nothing already there is lost. While it works, the chat shows live step cards — one per recording being transcribed, then a *Write note* step.
+When you **send**, echo transcribes each attachment and weaves the content into your note — cleaning up the spoken wording and, when topics differ, separating them into sections. The editor can consult the original transcript and the current note. New content is inserted without rewriting the existing text; organization uses explicit edits. Failed attachments are reported separately. While it works, the chat shows transcription, source-reading, and note-editing steps as they run.
 
 ### 4.3 The recording archive
 
@@ -122,7 +122,9 @@ After recording/import, **transcribe → organize** runs automatically (audio cl
 
 The result adapts to the input — decisions/actions and sections for a meeting, organized information for a lecture/briefing, a tight summary for a short monologue — and its length scales to how much there is.
 
-If a transient AI-server error fails a step, a notice appears with **Retry** (or ask the agent "retry"). The agent won't retry on its own.
+If an audio chunk still fails after the worker retries it, the recording stays incomplete and no new write-up is generated from that incomplete transcript. A missing-interval notice identifies the affected audio. Use **Retry** or ask the agent to retry the failed task: successful chunk results are reused when the recording and ASR settings match, and existing notes are preserved.
+
+An explicit request to transcribe again from scratch is a separate operation. Review the confirmation before replacing prior transcripts or notes.
 
 ---
 
@@ -143,13 +145,14 @@ The chat on the left is where you talk to the agent in plain language.
 | "Add a heading and group these" / "make it a table" / "as a timeline" | Restructures the note. |
 | "Cut it to 10 lines" / "summarize this section" | Condenses. |
 | "Tidy the wording" | Cleans up phrasing without changing structure. |
-| "It's X', not X" | Corrects the wording in place and re-organizes. |
+| "Replace this name with the corrected spelling" | Applies the requested wording correction. |
 | "Title it 'Project kickoff'" | Sets the first line / title. |
-| "Turn it into lecture notes" | Switches the note's genre/design (minutes). |
-| "Retry the transcription" | Retries a failed task. |
+| "Turn it into lecture notes" | Changes the content structure; minutes keep their fixed visual theme. |
+| "Retry the failed transcription" | Resumes a failed task, reusing eligible completed chunks. |
+| "Was that deadline conditional? Check the transcript." | Can search the current note's completed transcripts and read the relevant passages. |
 | "Where is it now?" | Reports the note's current state. |
 
-The agent knows which stage the note is in and suggests a sensible next step. When something is ambiguous it proposes options and confirms. After it changes the note body, an **Open this version** button appears beside that message so you can jump to exactly that version.
+The agent receives the note's current stage and available actions. For source-based questions, it can read transcript passages beyond the preview. Source search is lexical and limited to this note; a search miss is not proof that something was never said. When something is ambiguous it proposes options and confirms. After it changes the note body, an **Open this version** button appears beside that message so you can jump to exactly that version.
 
 ---
 
@@ -157,6 +160,7 @@ The agent knows which stage the note is in and suggests a sensible next step. Wh
 
 - **View & copy** — the note body shows on the right; copy it as rich or plain text from the header menu.
 - **Edit directly** — use *Edit* in the header to change the body by hand; your edits persist through later refinements.
+- **Concurrent edits** — an agent edit based on an older note version is rejected; the agent must read the current note before retrying.
 - **History & revert** — *History* shows previous versions; *revert to this note* restores one as the new active version. Old versions are kept, so you can always go back again.
 - **Back to start** — *Revert to the initial state* returns to the body right after the first organize, if you want to clear accumulated edits and restart.
 

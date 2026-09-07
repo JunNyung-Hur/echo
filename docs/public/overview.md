@@ -23,7 +23,8 @@ From capture to organized notes, the organizing is done by asking an AI agent li
 - **An AI agent beside the note** — fix details, restructure, summarize, change the style, recover from failures, all in natural language, no menu hunting. The agent knows where the note stands and suggests the next step.
 - **Two kinds of notes, shaped to the input** — *Minutes* (record → transcribe → structured write-up) and *Freeform* (a chat-first notepad you grow by typing and by attaching voice/audio that echo transcribes and weaves in). A meeting becomes minutes, a lecture becomes organized notes, a short thought a tight summary.
 - **You stay in control of the result** — edit a generated note by hand or refine it in plain language, and roll back to any earlier version.
-- **Bring your own models** — connect any OpenAI-compatible LLM and ASR endpoint, cloud or local (vLLM).
+- **Bring your own models** — connect cloud or local endpoints compatible with the supported request modes. The chat agent requires tool calling.
+- **Consult the source** — the agent can search and read the current note's completed transcripts when answering or editing.
 
 ---
 
@@ -93,4 +94,5 @@ echo grew out of **Meetzy**, a web-based meeting-minutes app, rebuilt from scrat
 - [Architecture](architecture.md) — system structure & runtime
 - [FAQ](faq.md)
 - [Requirements](requirements.md)
-- [Release notes](release-notes/)
+- [Release notes](release-notes/README.md)
+- [Quality evaluation](../../tools/core-check/README.md)
