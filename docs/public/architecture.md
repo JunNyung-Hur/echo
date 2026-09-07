@@ -35,7 +35,7 @@ The frontend calls Rust commands via `@tauri-apps/api`'s `invoke()`, and receive
 |---|---|
 | `src-ui/` (webview) | React screens — note list/detail, chat, settings |
 | `src-tauri/` core | Tauri commands (IPC boundary), repos (sqlx), chat agent, worker dispatch |
-| Workers (tokio) | finalize → transcribe → generate (minutes) / map-reduce (freeform) |
+| Workers (tokio) | finalize → resumable transcribe → generate (minutes) / conversation editor (freeform) |
 | Native audio | cpal capture, ffmpeg conversion |
 | External LLM·ASR | OpenAI-compatible endpoints registered in Settings |
 
@@ -75,7 +75,7 @@ erDiagram
 |---|---|
 | `notes` | Note meta. `note_type` = `minutes` / `freeform` (chosen at creation). `theme` is the note-style preset (freeform; minutes keep a fixed look). Title is derived from the body's first `#` heading / line. |
 | `recordings` | Recording file meta. `format` is a state machine (`recording`/`finalizing`/`webm`/…), `last_chunk_at` is a heartbeat. `consumed_at` marks a freeform attachment that's been sent; `chat_message_id` links it to the chat message that sent it (bubble chips). |
-| `transcripts` | ASR + post-processed output (raw/corrected). |
+| `transcripts` | Immutable raw ASR text; corrected_path currently points to the same raw text. |
 | `note_bodies` | The organized note body (Markdown on disk; pre-v0.0.3 bodies are HTML and still render). `context_snapshot` (JSON) captures meta at generation time; `archived` keeps old versions (history); `is_manual_edit` flags hand edits; `refine_request` records the user request behind an agent edit. |
 | `note_chat_messages` | Left-side chat. Assistant rows carry order-preserving `parts` (JSON `[text/tool/ask]` blocks — the source for step cards and history replay), legacy `tool_calls`, and `note_body_version_id`. |
 | `note_timeline_events` | Lifecycle moments (record/transcribe/generate) shown as system pills in the chat. |
@@ -98,7 +98,7 @@ sequenceDiagram
     UI->>Core: invoke start_recording / stop_recording
     Core->>W: spawn finalize (ffmpeg concat → webm)
     W->>W: spawn transcribe
-    W->>AI: ASR (chunked) + LLM post-process
+    W->>AI: ASR (chunked, successful chunks cached for retry)
     W->>W: spawn generate (minutes)
     W->>AI: prompt + transcript + note context → Markdown
     W->>Core: NoteBody persisted + emit note:updated
@@ -106,36 +106,31 @@ sequenceDiagram
 
 Minutes generation runs once, automatically, when a minutes note is first recorded/imported.
 
-### 4.2 Freeform: chat + attached audio (map-reduce)
+### 4.2 Freeform: chat + attached audio
 
-A freeform note is built by chatting. The agent's `write_note` tool writes/refines the note body (append / tidy / restructure). When a chat message carries attached recordings, the send path:
+Text and audio now use the same conversation editor. Attachments are transcribed
+first. Short attachments are supplied verbatim (up to 24,000 combined characters);
+longer ones are accessible through source search and range reads. There is no
+intermediate draft-and-merge summarization. Failed attachments are identified
+and must not be reported as successfully incorporated.
 
-```mermaid
-sequenceDiagram
-    participant UI as Webview
-    participant Core as Rust Core (chat)
-    participant AI as LLM/ASR
-
-    UI->>Core: chat_send (message + recordingIds)
-    Core->>AI: transcribe each recording (ASR)
-    Core->>AI: map — draft each transcript into a clean note fragment
-    Core->>AI: reduce — merge existing note + drafts into one body
-    Core->>Core: persist new NoteBody + assistant message + emit note:updated
-```
-
-The existing note is one of the merge inputs, so its content is preserved; different topics are split into sections. (freeform transcription does **not** trigger minutes generation.)
+`write_note` inserts agent-authored Markdown into an empty note, at the end, or
+after an exact unique anchor. It does not call another LLM or regenerate existing
+content. Corrections, organization and summarization use `read_minutes` followed
+by `edit_minutes`. Both paths create versions. Anchored insertions and edits use
+the read version ID; database commits reject stale versions atomically.
 
 ### 4.3 Chat agent (single-session, talker = doer)
 
 Text turns run a single continuous tool loop — the agent *is* the editor, not a dispatcher. Design points:
 
 - **View → edit**: the note body is never inlined in the system prompt. The agent calls `read_minutes` for the current body, then `edit_minutes` applies **str_replace edits** (`{old, new, replace_all}`) with guards — unique match (whitespace-tolerant fallback), reject no-op / comment-only changes. Guard failures return as retryable tool errors, so the model naturally retries with a corrected snippet. Each successful edit becomes a new `note_bodies` version with a red/green diff shown in chat.
-- **Tools**: `read_minutes` / `edit_minutes` (minutes + freeform edits), `write_note` (freeform dictation / tidy / restructure), `set_theme` (freeform note style), `ask_user`, `read_transcript` (only on explicit request), `retry_transcribe`, `retry_failed_task`, `get_recording_download_url`. Gated by stage and `user_state.available_actions` so the agent can't do what the screen can't.
+- **Tools**: `read_minutes` / `edit_minutes` (minutes + freeform edits), `write_note` (deterministic freeform insertion), `set_theme` (freeform note style), `ask_user`, `read_transcript` (display), `search_transcripts` / `read_transcript_range` (model evidence access), `retry_transcribe`, `retry_failed_task`, `get_recording_download_url`. Gated by stage and `user_state.available_actions` so the agent can't do what the screen can't.
 - **`ask_user` hard-stops the turn**: when a choice is genuinely ambiguous (or destructive, like re-transcribe) the agent asks with option buttons and the loop ends — structurally preventing ask-then-answer-yourself behavior.
 - **Parts model**: one user send = one assistant row whose `parts` array preserves the real order of text / tool calls / questions. History is serialized back in that order (a completion report never precedes its tool call), and stale tool results are pruned (only the last `read_minutes` keeps its body).
 - **System prompt** (`src-tauri/src/chat/prompt.rs`) is a section registry + IF/THEN rules plus honesty/turn rules (no pre-call narration, no claiming unfinished work), refilled each request with note state and the user's visible state.
 - **Output language** is decided from the `ui_lang` setting + the message's script, and pinned at the top of the prompt.
-- **Long-running tools** (`retry_*`) run only on an explicit instruction; status questions get a one-line suggestion instead. A runaway LLM stream is cut off by a size backstop, and whole-body freeform rewrites are rejected if they would lose existing content.
+- **Long-running tools** (`retry_*`) run only on an explicit instruction; status questions get a one-line suggestion instead. A runaway LLM stream is cut off by a size backstop, and explicit output truncation or incomplete streams are rejected before tool execution. Failed ASR chunks prevent completion; retries reuse successful recording-scoped checkpoints.
 
 ---
 
@@ -177,4 +172,13 @@ npx tauri build --config src-tauri/tauri.release.conf.json
 4. **Single-commit task dispatch** — task_id + a `processing` row + spawn are one transaction to avoid races (G-TASK-001).
 5. **One user send = one assistant row** — the `parts` array carries the ordered text/tool/ask blocks; history replay preserves that order so the model never learns to report before calling.
 6. **Timeline is a separate table** — merged chronologically into the chat by the frontend.
-7. **Existing content is preserved on freeform merge** — the prior note body is a merge input, never overwritten wholesale.
+7. **Existing content is preserved on freeform insertion** — the server inserts only new content; requested reorganizations use explicit edits against the current version.
+8. **Evidence reads are separate from display** — models receive bounded source text and character offsets; transcript content is never treated as an instruction.
+9. **Completion requires complete input/output** — failed ASR chunks block generation; explicit token-limit stops and unfinished SSE responses cannot commit edits.
+
+## 8. Verification
+
+Run `cargo test --locked --manifest-path tools/core-check/Cargo.toml --lib` for
+production-module transport/retrieval/persistence regressions. See
+`tools/core-check/README.md` for the real-model quality fixtures and desktop E2E
+scenarios. Synthetic checks alone do not establish model quality improvements.

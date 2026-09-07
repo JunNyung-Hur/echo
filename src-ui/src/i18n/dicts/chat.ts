@@ -5,6 +5,8 @@ import type { Entry } from "../dict";
  * 전사 언어 라벨(kor/eng/auto)·시각미정은 detail.lang.* / detail.time.unset 재사용.
  */
 export const chat = {
+  "chat.tool.searchTranscripts": { ko: "녹음 근거 찾는 중…", en: "Finding source evidence…" },
+  "chat.step.searchTranscripts": { ko: "녹음 근거 검색", en: "Search source evidence" },
   // tool progress (TOOL_LABEL — 진행 라벨)
   "chat.tool.readMinutes": { ko: "노트 확인 중…", en: "Reading the note…" },
   "chat.tool.edit": { ko: "노트 편집 중…", en: "Editing the note…" },

@@ -52,7 +52,7 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Transcript> {
 
 pub async fn list_for_note(pool: &SqlitePool, note_id: &str) -> Result<Vec<Transcript>> {
     Ok(sqlx::query_as::<_, Transcript>(
-        "SELECT * FROM transcripts WHERE note_id = ? ORDER BY created_at ASC",
+        "SELECT * FROM transcripts WHERE note_id = ? ORDER BY created_at ASC, rowid ASC",
     )
     .bind(note_id)
     .fetch_all(pool)
@@ -94,6 +94,16 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<()> {
         .await?;
     if res.rows_affected() == 0 {
         return Err(Error::NotFound(format!("transcript {id}")));
+    }
+    Ok(())
+}
+
+/// Only a failed/cancelled attempt may be resumed, retaining its identity.
+pub async fn restart_failed(pool: &SqlitePool, id: &str, task_id: &str) -> Result<()> {
+    let changed = sqlx::query("UPDATE transcripts SET status = 'processing', task_id = ? WHERE id = ? AND status IN ('failed', 'cancelled')")
+        .bind(task_id).bind(id).execute(pool).await?;
+    if changed.rows_affected() != 1 {
+        return Err(Error::Other("Transcript is no longer retryable".into()));
     }
     Ok(())
 }

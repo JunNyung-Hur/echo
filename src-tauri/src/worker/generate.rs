@@ -238,8 +238,15 @@ async fn run(
     let meeting_info = build_meeting_info_suggest_title(&note);
 
     // e3d01f5 — 노트 출력 언어 = ui_lang(설정). 전사 언어와 달라도 이 언어로 작성(번역).
-    let ui_lang = crate::repo::settings::get(&pool, "ui_lang").await.ok().flatten();
-    let target_lang = if ui_lang.as_deref() == Some("en") { "en" } else { "ko" };
+    let ui_lang = crate::repo::settings::get(&pool, "ui_lang")
+        .await
+        .ok()
+        .flatten();
+    let target_lang = if ui_lang.as_deref() == Some("en") {
+        "en"
+    } else {
+        "ko"
+    };
 
     let mut user_content =
         format!("[Meeting Info]\n{meeting_info}\n\n[Transcript]\n{transcript_text}");
@@ -260,11 +267,15 @@ async fn run(
         return Err(Error::Other("LLM produced empty minutes".into()));
     }
 
+    check_cancelled(&flag)?;
     // Persist content + complete (G-TASK-007 initial capture handled in repo).
     // Note-centric storage — body lives under the note's folder; store the
     // app_data-relative path.
-    let content_rel =
-        crate::storage::body_rel(&body.note_id, &body_id, crate::storage::body_ext_for(&minutes_md));
+    let content_rel = crate::storage::body_rel(
+        &body.note_id,
+        &body_id,
+        crate::storage::body_ext_for(&minutes_md),
+    );
     let content_path = crate::storage::resolve(&content_rel);
     if let Some(parent) = content_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -291,7 +302,14 @@ async fn run(
     )
     .await;
     // F-DESKTOP-004 — final completion ping (app may be tray-minimized).
-    crate::worker::notify(&app, &pool, "notify_note", "노트 준비 완료", &format!("{} — 본문이 준비됐어요", note.title)).await;
+    crate::worker::notify(
+        &app,
+        &pool,
+        "notify_note",
+        "노트 준비 완료",
+        &format!("{} — 본문이 준비됐어요", note.title),
+    )
+    .await;
 
     // G-TASK-004 — one-line summary fills note.description once (never overwrite).
     check_cancelled(&flag)?;

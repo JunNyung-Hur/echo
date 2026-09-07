@@ -176,7 +176,10 @@ async fn e2e_chat_tool_selection() {
     // 본문이 프롬프트에 없으므로 내용 편집·질문은 read_minutes 선행이 정답
     // (edit_minutes 직행도 편집 의도로는 정답으로 인정).
     let scenarios: &[(&str, &[&str])] = &[
-        ("제목을 분기 OKR 검토로 바꿔줘", &["read_minutes", "edit_minutes"]),
+        (
+            "제목을 분기 OKR 검토로 바꿔줘",
+            &["read_minutes", "edit_minutes"],
+        ),
         ("결정사항 부분 강조해줘", &["read_minutes", "edit_minutes"]),
         ("디자인 컬러풀하게 바꿔줘", &[]), // 회의록형은 고정 테마 — 안내로 거절, 무도구
         ("전사록 원문 그대로 보여줘", &["read_transcript"]),
@@ -212,7 +215,7 @@ async fn e2e_chat_tool_selection() {
     }
     eprintln!("[chat-e2e] {}/{} scenarios matched", pass, scenarios.len());
     assert!(
-        pass >= scenarios.len() - 1,
+        pass == scenarios.len(),
         "tool selection oracle: only {}/{} matched",
         pass,
         scenarios.len()
@@ -285,7 +288,7 @@ async fn e2e_chat_behaviors() {
     }));
     messages.push(json!({
         "role": "tool", "tool_call_id": rm.id,
-        "content": json!({ "ok": true, "content": body_md }).to_string(),
+        "content": json!({ "ok": true, "content": body_md, "version_id": "fixture-v1" }).to_string(),
     }));
     let turn2 = ai::chat_with_tools(&llm, &messages, &done_tools)
         .await
@@ -307,13 +310,17 @@ async fn e2e_chat_behaviors() {
         }),
         json!({
             "role": "tool", "tool_call_id": "call_rm",
-            "content": json!({ "ok": true, "content": body_md }).to_string(),
+            "content": json!({ "ok": true, "content": body_md, "version_id": "fixture-v1" }).to_string(),
         }),
     ];
     let edit_turn = ai::chat_with_tools(&llm, &edit_msgs, &done_tools)
         .await
         .expect("edit turn");
-    let e_tools: Vec<&str> = edit_turn.tool_calls.iter().map(|t| t.name.as_str()).collect();
+    let e_tools: Vec<&str> = edit_turn
+        .tool_calls
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     eprintln!("[edit] tools={e_tools:?}");
     let em = edit_turn
         .tool_calls
@@ -381,10 +388,12 @@ async fn e2e_freeform_behaviors() {
         }),
         json!({
             "role": "tool", "tool_call_id": "call_rm",
-            "content": json!({ "ok": true, "content": body_md }).to_string(),
+            "content": json!({ "ok": true, "content": body_md, "version_id": "fixture-v1" }).to_string(),
         }),
     ];
-    let turn = ai::chat_with_tools(&llm, &msgs, &ff_tools).await.expect("edit turn");
+    let turn = ai::chat_with_tools(&llm, &msgs, &ff_tools)
+        .await
+        .expect("edit turn");
     let names: Vec<&str> = turn.tool_calls.iter().map(|t| t.name.as_str()).collect();
     eprintln!("[ff-e2e] phrase-delete tools={names:?}");
     let em = turn
@@ -422,19 +431,27 @@ async fn e2e_freeform_behaviors() {
         }),
         json!({
             "role": "tool", "tool_call_id": "call_rm2",
-            "content": json!({ "ok": true, "content": body2 }).to_string(),
+            "content": json!({ "ok": true, "content": body2, "version_id": "fixture-v1" }).to_string(),
         }),
     ];
-    let turn2 = ai::chat_with_tools(&llm, &msgs2, &ff_tools).await.expect("correction turn");
+    let turn2 = ai::chat_with_tools(&llm, &msgs2, &ff_tools)
+        .await
+        .expect("correction turn");
     let em2 = turn2
         .tool_calls
         .iter()
         .find(|t| t.name == "edit_minutes")
         .expect("name correction must call edit_minutes");
     let edits2 = em2.args["edits"].as_array().cloned().unwrap_or_default();
-    eprintln!("[ff-e2e] correction edits={}", serde_json::to_string(&edits2).unwrap());
+    eprintln!(
+        "[ff-e2e] correction edits={}",
+        serde_json::to_string(&edits2).unwrap()
+    );
     let (fixed2, _d2, errs2) = crate::chat::edit::apply_str_edits(body2, &edits2);
-    assert!(errs2.is_empty(), "correction edits failed to apply: {errs2:?}");
+    assert!(
+        errs2.is_empty(),
+        "correction edits failed to apply: {errs2:?}"
+    );
     assert!(
         fixed2.contains("지웅배") && !fixed2.contains("최홍배"),
         "정정 방향 오류 — 본문의 최홍배가 지웅배로 바뀌어야 함:\n{fixed2}"
@@ -450,7 +467,9 @@ async fn e2e_freeform_behaviors() {
             json!({"role":"system","content": msgs[0]["content"]}),
             json!({"role":"user","content": utterance}),
         ];
-        let t2 = ai::chat_with_tools(&llm, &msgs, &ff_tools).await.expect("turn");
+        let t2 = ai::chat_with_tools(&llm, &msgs, &ff_tools)
+            .await
+            .expect("turn");
         let got: Vec<&str> = t2.tool_calls.iter().map(|t| t.name.as_str()).collect();
         let ok = if expected.is_empty() {
             got.is_empty()
@@ -459,7 +478,10 @@ async fn e2e_freeform_behaviors() {
         };
         eprintln!(
             "[ff-e2e] {:?} → {:?} (expect {:?}) {}",
-            utterance, got, expected, if ok { "PASS" } else { "FAIL" }
+            utterance,
+            got,
+            expected,
+            if ok { "PASS" } else { "FAIL" }
         );
         assert!(ok, "freeform routing failed for {utterance:?}");
     }
@@ -470,10 +492,12 @@ async fn e2e_freeform_behaviors() {
 /// body) directly into echo.db so the chat refine UI can be tested. Writes the
 /// transcript/body files under app_data too.
 ///
-///   ECHO_DB="<echo.db>" cargo test --lib seed_test_note -- --ignored --nocapture
+///   ECHO_DB="<echo.db>" ECHO_E2E_WEBM="<path.webm>" cargo test --lib seed_test_note -- --ignored --nocapture
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "mutates echo.db; run explicitly with --ignored"]
 async fn seed_test_note() {
+    let webm = std::env::var("ECHO_E2E_WEBM").expect("set ECHO_E2E_WEBM to a recording .webm");
+    assert!(Path::new(&webm).is_file(), "ECHO_E2E_WEBM must name an existing file");
     let db = db_path();
     let app_data = db.parent().expect("db parent").to_path_buf();
     let opts = SqliteConnectOptions::new()
@@ -500,7 +524,6 @@ async fn seed_test_note() {
     .expect("insert note");
 
     // Recording row points at an existing webm (download/retry realism).
-    let webm = "C:\\Users\\hurjn\\AppData\\Roaming\\com.echo.app\\recordings\\478e21f0-209e-42b0-9267-4ffe5d3b023f\\27acf777-1830-4579-a3b2-cc099b3ece8f\\27acf777-1830-4579-a3b2-cc099b3ece8f.webm";
     sqlx::query(
         "INSERT INTO recordings (id, note_id, file_path, original_filename, format, finalized_at) \
          VALUES (?, ?, ?, 'recording.webm', 'webm', datetime('now'))",
@@ -640,6 +663,7 @@ async fn manual_edit_creates_active_manual_version() {
         Some("{}"),
         true,
         None,
+        Some(&orig_id),
     )
     .await
     .expect("manual edit archive+create");

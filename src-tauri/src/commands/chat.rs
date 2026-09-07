@@ -22,7 +22,11 @@ pub async fn chat_send(
     let pool = state.db.clone();
     // 진행 중 표시 등록 — 노트를 나갔다 돌아와도 chat_running으로 "응답 대기"
     // 인디케이터를 복원한다. 어떤 경로로 끝나든 반드시 해제(끝에서 remove).
-    state.chat_runs.insert(note_id.clone());
+    if !state.chat_runs.insert(note_id.clone()) {
+        return Err(crate::error::Error::Other(
+            "A turn is already running for this note.".into(),
+        ));
+    }
     // 첨부 녹음의 consumed 처리·메시지 연결은 run_agent가 유저 메시지를 만든 직후
     // 수행한다(메시지 id가 필요하므로). 여기선 그대로 위임.
     let result = crate::chat::agent::run_agent(&app, &pool, &note_id, &message, user_state).await;

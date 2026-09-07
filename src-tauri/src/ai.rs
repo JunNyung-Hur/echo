@@ -91,6 +91,8 @@ pub async fn chat_completion(
                     .json()
                     .await
                     .map_err(|e| Error::Other(format!("llm response parse failed: {e}")))?;
+                crate::sse::check_finish(v["choices"][0]["finish_reason"].as_str())
+                    .map_err(Error::Other)?;
                 let content = v["choices"][0]["message"]["content"]
                     .as_str()
                     .unwrap_or_default()
@@ -150,7 +152,8 @@ pub async fn chat_with_tools(
     } else {
         endpoint.api_key.as_str()
     };
-    let mut payload = json!({ "model": endpoint.model_id, "messages": messages, "temperature": 0.2 });
+    let mut payload =
+        json!({ "model": endpoint.model_id, "messages": messages, "temperature": 0.2 });
     if !tools.is_empty() {
         payload["tools"] = json!(tools);
     }
@@ -175,6 +178,8 @@ pub async fn chat_with_tools(
                     .json()
                     .await
                     .map_err(|e| Error::Other(format!("llm response parse failed: {e}")))?;
+                crate::sse::check_finish(v["choices"][0]["finish_reason"].as_str())
+                    .map_err(Error::Other)?;
                 let msg = &v["choices"][0]["message"];
                 let content = msg["content"].as_str().unwrap_or_default().to_string();
                 let mut tool_calls = Vec::new();
@@ -186,7 +191,8 @@ pub async fn chat_with_tools(
                             .unwrap_or_default()
                             .to_string();
                         let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                        let args = serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
+                        let args = serde_json::from_str(args_str)
+                            .map_err(|e| Error::Other(format!("Invalid tool arguments: {e}")))?;
                         tool_calls.push(ToolCall { id, name, args });
                     }
                 }
@@ -265,7 +271,8 @@ pub async fn chat_with_tools_streaming(
     }
 
     let mut stream = resp.bytes_stream();
-    let mut buf = String::new();
+    let mut decoder = crate::sse::Decoder::default();
+    let mut completed = false;
     let mut content = String::new();
     // index → (id, name, arg_buf)
     let mut tool_accum: BTreeMap<u64, (String, String, String)> = BTreeMap::new();
@@ -274,21 +281,24 @@ pub async fn chat_with_tools_streaming(
 
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| Error::Other(format!("llm stream error: {e}")))?;
-        buf.push_str(&String::from_utf8_lossy(&bytes));
-        loop {
-            let Some(nl) = buf.find('\n') else { break };
-            let line = buf[..nl].trim().to_string();
-            buf.drain(..=nl);
+        for line in decoder.push(&bytes).map_err(Error::Other)? {
             let Some(data) = line.strip_prefix("data:") else {
                 continue;
             };
             let data = data.trim();
             if data == "[DONE]" {
+                completed = true;
                 continue;
             }
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
-                continue;
-            };
+            let v: serde_json::Value = serde_json::from_str(data)
+                .map_err(|e| Error::Other(format!("Invalid SSE JSON: {e}")))?;
+            if let Some(reason) = v["choices"][0]["finish_reason"].as_str() {
+                crate::sse::check_finish(Some(reason)).map_err(Error::Other)?;
+                completed = true;
+            }
+            if v.get("error").is_some() {
+                return Err(Error::Other("Model returned a streaming error".into()));
+            }
             let delta = &v["choices"][0]["delta"];
             if let Some(c) = delta["content"].as_str() {
                 if !c.is_empty() {
@@ -323,8 +333,7 @@ pub async fn chat_with_tools_streaming(
                 }
             }
             // 런어웨이 백스톱 — 무한 생성으로 인한 영구 매달림 방지 (ab0ba14).
-            let grown =
-                content.len() + tool_accum.values().map(|(_, _, a)| a.len()).sum::<usize>();
+            let grown = content.len() + tool_accum.values().map(|(_, _, a)| a.len()).sum::<usize>();
             if grown > RUNAWAY_CHARS {
                 tracing::warn!(total = grown, "[stream] RUNAWAY — aborting");
                 return Err(Error::Other(
@@ -334,13 +343,19 @@ pub async fn chat_with_tools_streaming(
         }
     }
 
+    decoder.finish().map_err(Error::Other)?;
+    if !completed {
+        return Err(Error::Other(
+            "Model stream ended before completion; no changes were applied.".into(),
+        ));
+    }
     let tool_calls: Vec<ToolCall> = tool_accum
         .into_values()
         .filter(|(_, name, _)| !name.is_empty())
         .map(|(id, name, args)| {
             let args_v = serde_json::from_str(if args.is_empty() { "{}" } else { &args })
-                .unwrap_or_else(|_| json!({}));
-            ToolCall {
+                .map_err(|e| Error::Other(format!("Invalid tool arguments for {name}: {e}")))?;
+            Ok(ToolCall {
                 id: if id.is_empty() {
                     format!("call_{name}")
                 } else {
@@ -348,9 +363,9 @@ pub async fn chat_with_tools_streaming(
                 },
                 name,
                 args: args_v,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(ChatTurn {
         content,

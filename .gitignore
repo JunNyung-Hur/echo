@@ -33,3 +33,8 @@ docs/dev/e2e/runs/
 
 # 동봉 ffmpeg 사이드카(LGPL 빌드 — 로컬에서 받아 넣음, 대용량이라 커밋 제외)
 src-tauri/binaries/*.exe
+
+# Headless core verification build
+tools/core-check/target/
+tools/core-check/cc*.cdtor.*
+tools/core-check/cc*.res

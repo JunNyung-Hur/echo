@@ -15,3 +15,4 @@ pub mod exec;
 pub mod prompt;
 pub mod refine;
 pub mod tools;
+pub mod source;

@@ -171,19 +171,33 @@ async fn asr_streaming(
 
     // Accumulate SSE `data:` delta content.
     let mut out = String::new();
+    let mut completed = false;
     for line in body.lines() {
         let Some(data) = line.trim_start().strip_prefix("data:") else {
             continue;
         };
         let data = data.trim();
         if data == "[DONE]" {
+            completed = true;
             break;
         }
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+        {
+            let v: serde_json::Value = serde_json::from_str(data)
+                .map_err(|e| Error::Other(format!("Invalid ASR stream: {e}")))?;
+            if let Some(reason) = v["choices"][0]["finish_reason"].as_str() {
+                crate::sse::check_finish(Some(reason)).map_err(Error::Other)?;
+                completed = true;
+            }
+            if v.get("error").is_some() {
+                return Err(Error::Other("ASR streaming error".into()));
+            }
             if let Some(c) = v["choices"][0]["delta"]["content"].as_str() {
                 out.push_str(c);
             }
         }
+    }
+    if !completed {
+        return Err(Error::Other("ASR stream ended before completion".into()));
     }
     let out = out.trim().to_string();
     Ok(if out.is_empty() { None } else { Some(out) })
@@ -226,6 +240,31 @@ async fn asr_openai_transcribe(
         .json()
         .await
         .map_err(|e| Error::Other(format!("asr json error: {e}")))?;
-    let text = v["text"].as_str().unwrap_or_default().trim().to_string();
+    let text = v["text"]
+        .as_str()
+        .ok_or_else(|| Error::Other("ASR response is missing text".into()))?
+        .trim()
+        .to_string();
     Ok(if text.is_empty() { None } else { Some(text) })
+}
+
+/// Only classify near-zero PCM samples as digital silence. Quiet speech and
+/// ambient audio must go through ASR; an empty response there is retryable.
+pub fn is_digital_silence(wav: &[u8]) -> bool {
+    let Ok(mut reader) = hound::WavReader::new(std::io::Cursor::new(wav)) else {
+        return false;
+    };
+    if reader.spec().bits_per_sample != 16
+        || reader.spec().sample_format != hound::SampleFormat::Int
+    {
+        return false;
+    }
+    let mut count = 0;
+    for sample in reader.samples::<i16>() {
+        match sample {
+            Ok(value) if (-1..=1).contains(&value) => count += 1,
+            _ => return false,
+        }
+    }
+    count > 0
 }

@@ -65,9 +65,9 @@ pub async fn get_body_content(
 ) -> Result<Option<String>> {
     let body = note_bodies::get(&state.db, &body_id).await?;
     match body.content_path {
-        Some(p) if !p.is_empty() => {
-            Ok(tokio::fs::read_to_string(crate::storage::resolve(&p)).await.ok())
-        }
+        Some(p) if !p.is_empty() => Ok(tokio::fs::read_to_string(crate::storage::resolve(&p))
+            .await
+            .ok()),
         _ => Ok(None),
     }
 }
@@ -107,7 +107,8 @@ pub async fn restore_note_body(
     let transcript_id = src.transcript_id.clone();
 
     let new_id = Uuid::new_v4().to_string();
-    let content_rel = crate::storage::body_rel(&note_id, &new_id, crate::storage::body_ext_for(&html));
+    let content_rel =
+        crate::storage::body_rel(&note_id, &new_id, crate::storage::body_ext_for(&html));
     let path = crate::storage::resolve(&content_rel);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -125,6 +126,7 @@ pub async fn restore_note_body(
         initial_ctx.as_deref(),
         false,
         None,
+        active.as_ref().map(|b| b.id.as_str()),
     )
     .await?;
     Ok(())
@@ -150,7 +152,9 @@ pub async fn save_manual_body_edit(
     let context_snapshot = crate::worker::generate::context_snapshot_json(&note);
     let (initial_content, initial_ctx) = match &active {
         Some(a) => (
-            a.initial_content_path.clone().or_else(|| a.content_path.clone()),
+            a.initial_content_path
+                .clone()
+                .or_else(|| a.content_path.clone()),
             a.initial_context_snapshot
                 .clone()
                 .or_else(|| Some(a.context_snapshot.clone())),
@@ -159,7 +163,8 @@ pub async fn save_manual_body_edit(
     };
 
     let new_id = Uuid::new_v4().to_string();
-    let content_rel = crate::storage::body_rel(&note_id, &new_id, crate::storage::body_ext_for(&html));
+    let content_rel =
+        crate::storage::body_rel(&note_id, &new_id, crate::storage::body_ext_for(&html));
     let path = crate::storage::resolve(&content_rel);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -177,6 +182,7 @@ pub async fn save_manual_body_edit(
         initial_ctx.as_deref(),
         true,
         None,
+        active.as_ref().map(|b| b.id.as_str()),
     )
     .await?;
     Ok(())
@@ -211,6 +217,21 @@ pub async fn retry_transcribe(
         .into_iter()
         .find(|r| r.format == "webm")
         .ok_or_else(|| Error::Other("정리된 녹음이 없어 전사를 재시도할 수 없습니다.".into()))?;
+
+    if let Some(failed) = transcripts::list_for_note(&pool, &note_id)
+        .await?
+        .into_iter()
+        .rev()
+        .find(|t| matches!(t.status.as_str(), "failed" | "cancelled"))
+    {
+        return crate::worker::transcribe::dispatch(
+            &app,
+            &pool,
+            &note_id,
+            failed.recording_id.as_deref(),
+        )
+        .await;
+    }
 
     // Fresh start — drop prior artifacts so stage derivation isn't confused by
     // a stale failed transcript/body.

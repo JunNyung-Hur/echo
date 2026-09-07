@@ -33,6 +33,9 @@ pub async fn execute_tool(
         "write_note" => write_note_handler(app, pool, note_id, args).await,
         "get_recording_download_url" => recording_file(pool, note_id).await,
         "read_transcript" => read_transcript(pool, note_id).await,
+        "search_transcripts" | "read_transcript_range" => {
+            super::source::execute(pool, note_id, name, args).await
+        }
         "retry_transcribe" => retry_transcribe(app, pool, note_id).await,
         "retry_failed_task" => retry_failed_task(app, pool, note_id).await,
         other => json!({ "ok": false, "error": format!("알 수 없는 도구: {other}") }),
@@ -53,7 +56,7 @@ async fn read_minutes(pool: &DbPool, note_id: &str) -> Value {
     match tokio::fs::read_to_string(crate::storage::resolve(&path)).await {
         // 활성 본문 전체 반환(마크다운; 레거시는 HTML일 수 있음) — edit_minutes 의
         // old 매칭과 Q&A 의 단일 진실 소스라 완전해야 한다.
-        Ok(content) => json!({ "ok": true, "content": content }),
+        Ok(content) => json!({ "ok": true, "content": content, "version_id": active.id }),
         Err(e) => json!({ "ok": false, "error": format!("노트 본문 로드 실패: {e}") }),
     }
 }
@@ -81,6 +84,9 @@ async fn edit_minutes(app: &AppHandle, pool: &DbPool, note_id: &str, args: &Valu
         Ok(None) => return json!({ "ok": false, "error": "편집할 활성 노트가 없음" }),
         Err(e) => return json!({ "ok": false, "error": e.to_string() }),
     };
+    if args["base_version"].as_str() != Some(active.id.as_str()) {
+        return json!({"ok": false, "retryable": true, "error": "Read the current note with read_minutes and pass its version_id as base_version."});
+    }
     let Some(path) = active.content_path.clone() else {
         return json!({ "ok": false, "error": "노트 본문 파일 경로가 없음" });
     };
@@ -159,10 +165,12 @@ async fn edit_minutes(app: &AppHandle, pool: &DbPool, note_id: &str, args: &Valu
         initial_ctx.as_deref(),
         false,
         Some(&refine_request),
+        Some(&active.id),
     )
     .await
     {
-        return json!({ "ok": false, "error": e.to_string() });
+        let _ = tokio::fs::remove_file(&abs).await;
+        return json!({ "ok": false, "retryable": true, "error": e.to_string() });
     }
     // 제목 = 본문 `# ` 헤딩 재파생 ('제목 바꿔줘' = 헤딩 편집).
     let _ = notes::update(
@@ -209,21 +217,15 @@ async fn set_theme(app: &AppHandle, pool: &DbPool, note_id: &str, args: &Value) 
 
 /// write_note — 노트 필기형 본문 작성/수정 (refine::run_write, echo 고유).
 async fn write_note_handler(app: &AppHandle, pool: &DbPool, note_id: &str, args: &Value) -> Value {
-    let user_request = args
-        .get("user_request")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim();
-    if user_request.is_empty() {
-        return json!({ "ok": false, "error": "노트에 반영할 내용(user_request)이 비어 있습니다." });
-    }
-    let intent = args
-        .get("intent")
-        .and_then(|v| v.as_str())
-        .unwrap_or("append");
-    match refine::run_write(app, pool, note_id, user_request, intent).await {
-        Ok(body_id) => json!({ "ok": true, "note_body_id": body_id, "status": "completed" }),
-        Err(e) => json!({ "ok": false, "error": e.to_string() }),
+    let content = args["content"].as_str().unwrap_or("");
+    let after = args["after"].as_str();
+    let version = args["base_version"].as_str();
+    match refine::run_insert(pool, note_id, content, after, version).await {
+        Ok(body_id) => {
+            let _ = app.emit("note:updated", note_id);
+            json!({"ok": true, "note_body_id": body_id, "inserted_content": content, "status": "completed"})
+        }
+        Err(e) => json!({"ok": false, "retryable": true, "error": e.to_string()}),
     }
 }
 
@@ -284,6 +286,16 @@ async fn retry_transcribe(app: &AppHandle, pool: &DbPool, note_id: &str) -> Valu
     let Some(rec) = recs.into_iter().find(|r| r.format == "webm") else {
         return json!({ "ok": false, "error": "정리된 녹음이 없어 전사를 재시도할 수 없습니다." });
     };
+    let cache = crate::storage::resolve(&format!(
+        "{}/transcripts/{}.asr-cache",
+        crate::storage::note_rel_dir(note_id),
+        rec.id
+    ));
+    if cache.exists() {
+        if let Err(e) = tokio::fs::remove_dir_all(cache).await {
+            return json!({"ok": false, "error": e.to_string()});
+        }
+    }
     if let Ok(bodies) = note_bodies::list_for_note(pool, note_id).await {
         for b in bodies {
             let _ = note_bodies::delete(pool, &b.id).await;
@@ -333,12 +345,17 @@ async fn retry_failed_task(app: &AppHandle, pool: &DbPool, note_id: &str) -> Val
         };
     }
 
-    // Failed transcript → full re-transcribe.
-    if ts
+    if let Some(t) = ts
         .iter()
-        .any(|t| t.status == "failed" || t.status == "cancelled")
+        .rev()
+        .find(|t| t.status == "failed" || t.status == "cancelled")
     {
-        return retry_transcribe(app, pool, note_id).await;
+        return match transcribe::dispatch(app, pool, note_id, t.recording_id.as_deref()).await {
+            Ok(()) => {
+                json!({"ok": true, "retried": "transcript", "eta_minutes": "1-10", "resumed": true})
+            }
+            Err(e) => json!({"ok": false, "error": e.to_string()}),
+        };
     }
 
     json!({ "ok": false, "error": "재시작할 실패 작업이 없습니다. 현재 진행 중인 작업이 끝날 때까지 기다려주세요." })
