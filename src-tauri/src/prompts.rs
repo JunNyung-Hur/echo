@@ -16,7 +16,7 @@ const MINUTES_SYSTEM_PROMPT_TEMPLATE: &str = include_str!("prompts/minutes_syste
 // rule 2(출력 언어)의 단일 출처. KO 문구는 `.md`의 원래 rule 2와 글자 단위로
 // 일치해야 한다(자리표시자 치환 시 byte-identical 보장).
 const MINUTES_RULE2_KO: &str =
-    "2. **Language** — Write in the SAME language as the transcript. Korean → Korean. Non-negotiable.";
+    "2. **Language** — Write the entire note in Korean. Translate other languages faithfully, retaining proper nouns and technical terms.";
 const MINUTES_RULE2_EN: &str = "2. **Language** — Write the entire minutes in ENGLISH. If the transcript is in another language (e.g. Korean), translate the content into natural English while preserving proper nouns, numbers, dates, and product/technical terms faithfully (transliterate personal/company names; keep the original-language term in parentheses when there is no clean equivalent). Non-negotiable.";
 
 /// 노트 본문 시스템 프롬프트. `target_lang="en"`이면 rule 2를 영어 번역 규칙으로 치환

@@ -101,7 +101,7 @@ npx tauri build --config src-tauri/tauri.release.conf.json
 Under `src-tauri/src/chat/`: the system-prompt builder (`prompt.rs`), tool specs (`tools.rs`), agent loop (`agent.rs`), and tool execution (`exec.rs`). A snapshot of the user's screen state (`user_state`) is included on each request and feeds both the tool gate and the prompt.
 
 ### Q. How are freeform attachments turned into notes?
-On send, each attached recording is transcribed, then a map-reduce step drafts each transcript and merges the drafts with the existing note into one — the existing note is one of the merge inputs, so its content is preserved.
+On send, each attached recording is transcribed, then the conversation editor reads its original evidence and adds or edits the note. Adding new content preserves the existing text in code; reorganizing existing content uses explicit edits and version history. Failed attachments are reported separately.
 
 ---
 

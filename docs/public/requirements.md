@@ -39,10 +39,10 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 
 ### 2.4 Freeform notes
 
-- [MVP] A freeform note is chat-first: the agent's `write_note` writes/refines the body; the user can also edit the body directly.
+- [MVP] A freeform note is chat-first: the agent inserts new content with `write_note` and edits existing content with `edit_minutes`; the user can also edit the body directly.
 - [MVP] In the chat input the user can attach audio before sending: **record**, **pick a file**, or **drag-and-drop** — multiple attachments per send.
 - [MVP] Attachments show as chips (length, play, remove-with-confirm); recording/upload in progress is reflected.
-- [MVP] Sending transcribes each attachment and incorporates it into the note via map-reduce — existing content preserved, different topics split into sections.
+- [MVP] Sending transcribes each attachment and passes the original evidence to the conversation editor — new content is inserted while existing text is preserved.
 - [MVP] Sent recordings move to the note's **archive** (header badge with count; replay/delete).
 - [MVP] Recordings attached but not yet sent are restored as chips when the note is reopened (no loss if the app closes first).
 - [MVP] Only one *in-progress* capture per note at a time; finished recordings may accumulate.
@@ -57,7 +57,7 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 ### 2.6 Transcription
 
 - [MVP] Automatic transcription after recording/import (minutes) or on send (freeform attachments). Progress shown.
-- [MVP] Chunked ASR + LLM post-processing (normalization, mis-hearing fixes).
+- [MVP] Chunked raw ASR with successful-chunk checkpoints; incomplete transcription cannot be marked completed.
 - [MVP] Retry (button / chat). In-progress transcription can be cancelled.
 - [MVP] Transcript is immutable — nothing but transcribe mutates it.
 
@@ -65,14 +65,14 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 
 - [MVP] Minutes: automatic structured write-up after transcription (Markdown; pre-v0.0.3 HTML bodies still render). Adapts to the input (decisions/actions for a meeting, organized info for a lecture, a tight summary for a monologue); length scales to the content.
 - [MVP] Minutes generation runs once automatically — no auto-re-trigger.
-- [MVP] Freeform: attachments are organized into the note via map-reduce with the existing note as one of the inputs; the body's first line is a `#` title that spans all topics. A whole-body rewrite that would lose existing content is rejected (content-loss guard).
+- [MVP] Freeform: original attachment evidence is read by the conversation editor. New content uses deterministic insertion; organization uses version-checked edits.
 - [MVP] Freeform notes render through a selectable **note style** preset (Minimal/Notepad/Report/Colorful; default set in Settings/first-run); minutes keep a fixed look.
 - [MVP] Generation-time meta is captured in `note_bodies.context_snapshot` (NOT NULL).
 
 ### 2.8 Chat agent
 
 - [MVP] Natural-language requests in the left chat panel; a single continuous tool loop (talker = doer).
-- [MVP] Tools: `read_minutes` + `edit_minutes` (str_replace in-place edits, minutes + freeform), `write_note` (freeform dictation/tidy/restructure), `set_theme` (freeform note style), `ask_user`, recording download, transcribe retry, failed-task retry, transcript read (explicit request only).
+- [MVP] Tools: `read_minutes` + `edit_minutes` (str_replace in-place edits, minutes + freeform), `write_note` (freeform insertion), `set_theme` (freeform note style), `ask_user`, recording download, transcribe retry, failed-task retry, transcript display plus autonomous evidence search/range reads.
 - [MVP] The body is **not** inlined into the prompt — the agent reads it with `read_minutes` (view→edit), so edits always target the current version.
 - [MVP] `edit_minutes` guards: unique match (whitespace-tolerant fallback), replace_all for terminology sweeps, reject no-op/comment-only; guard failures return as retryable errors the model corrects.
 - [MVP] `ask_user` hard-stops the turn with choice buttons; destructive actions (re-transcribe) require a confirmed answer first.
@@ -140,7 +140,7 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 
 | Integration | Requirement |
 |---|---|
-| LLM API | OpenAI-compatible. Used for post-processing, organizing, in-place edits, chat, and freeform map-reduce. |
+| LLM API | OpenAI-compatible. Used for source-grounded organization, in-place edits and chat. |
 | ASR API | OpenAI-compatible. Chunked calls. `transcriptions` (multipart) or audio_url style. |
 
 ---
@@ -150,7 +150,7 @@ Out of scope: mobile apps, real-time multi-user collaboration, calendar integrat
 - [ ] First-run setup (language → models → note style) works
 - [ ] Create both note types; type is fixed and shown by icon
 - [ ] Minutes: record/import → transcribe → generate → chat edit (read→edit, diff card) → delete
-- [ ] Freeform: chat write; attach record/file/drag (multiple) → send → map-reduce merge preserves existing body
+- [ ] Freeform: chat write; attach record/file/drag (multiple) → send → source-grounded editor preserves unrelated content
 - [ ] Freeform: archive (replay/delete), unsent attachments restored on reopen; note style switch applies
 - [ ] Title follows the body's first `#` heading / line (no separate meta editing)
 - [ ] Chat agent gates/calls tools per stage/capability; step cards + edit diffs render; ask cards answerable

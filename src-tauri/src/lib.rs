@@ -12,6 +12,7 @@ mod models;
 mod prompts;
 mod repo;
 mod storage;
+mod sse;
 mod timeline;
 mod worker;
 

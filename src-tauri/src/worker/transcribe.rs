@@ -65,7 +65,24 @@ pub async fn dispatch(
     recording_id: Option<&str>,
 ) -> Result<()> {
     let task_id = Uuid::new_v4().to_string();
-    let t = transcripts::create_processing(pool, note_id, recording_id, &task_id).await?;
+    let prior = transcripts::list_for_note(pool, note_id).await?;
+    if prior
+        .iter()
+        .any(|t| t.recording_id.as_deref() == recording_id && t.status == "processing")
+    {
+        return Err(Error::Other(
+            "This recording is already being transcribed".into(),
+        ));
+    }
+    let t = if let Some(failed) = prior.iter().rev().find(|t| {
+        t.recording_id.as_deref() == recording_id
+            && matches!(t.status.as_str(), "failed" | "cancelled")
+    }) {
+        transcripts::restart_failed(pool, &failed.id, &task_id).await?;
+        transcripts::get(pool, &failed.id).await?
+    } else {
+        transcripts::create_processing(pool, note_id, recording_id, &task_id).await?
+    };
     spawn(app.clone(), t.id, task_id);
     Ok(())
 }
@@ -176,21 +193,72 @@ async fn run(
 
     // ffmpeg: webm → 16kHz mono WAV chunks. Flat note-centric storage; the DB
     // stores app_data-relative paths.
-    let chunk_dir =
-        crate::storage::resolve(&crate::storage::transcript_chunks_rel(&t.note_id, &transcript_id));
+    let chunk_dir = crate::storage::resolve(&crate::storage::transcript_chunks_rel(
+        &t.note_id,
+        &transcript_id,
+    ));
     let rec_path = crate::storage::resolve(&rec.file_path);
+    // Failed attempts retain WAVs for inspection. Rebuild this temporary set so
+    // changed chunk sizes cannot leave stale tail segments in the next attempt.
+    // Successful ASR results live separately in the recording-scoped cache.
+    match tokio::fs::remove_dir_all(&chunk_dir).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
     let chunks = asr::split_to_wav_chunks(&rec_path, &chunk_dir, chunk_seconds).await?;
     if chunks.is_empty() {
         return Err(Error::Other("no audio chunks produced".into()));
     }
     let total = chunks.len();
 
+    // Cache is recording-scoped so a retry reuses successful chunks. Changing
+    // the source file or ASR settings invalidates it; credentials are never stored.
+    let metadata = tokio::fs::metadata(&rec_path).await?;
+    let cache_dir = crate::storage::resolve(&format!(
+        "{}/transcripts/{}.asr-cache",
+        crate::storage::note_rel_dir(&t.note_id),
+        recording_id
+    ));
+    let cache_key = serde_json::json!({"version": 1, "bytes": metadata.len(),
+        "modified": metadata.modified().ok().and_then(|x| x.duration_since(std::time::UNIX_EPOCH).ok()).map(|x| x.as_nanos().to_string()),
+        "endpoint_id": asr_ep.id, "model": asr_ep.model_id, "request_mode": asr_ep.request_mode,
+        "base_url": asr_ep.api_base_url, "language": language, "chunk_seconds": chunk_seconds,
+        "max_tokens": max_tokens, "chunks": total});
+    let manifest = cache_dir.join("manifest.json");
+    let prior = tokio::fs::read_to_string(&manifest)
+        .await
+        .ok()
+        .and_then(|x| serde_json::from_str::<serde_json::Value>(&x).ok());
+    if prior.as_ref() != Some(&cache_key) {
+        if cache_dir.exists() {
+            tokio::fs::remove_dir_all(&cache_dir).await?;
+        }
+        tokio::fs::create_dir_all(&cache_dir).await?;
+        tokio::fs::write(&manifest, cache_key.to_string()).await?;
+    }
     let mut texts: Vec<String> = Vec::new();
+    let mut failed_chunks: Vec<usize> = Vec::new();
     for (i, chunk_path) in chunks.iter().enumerate() {
         check_cancelled(&flag)?; // G-CANCEL-002 — before each chunk
         emit_progress(&app, &t.note_id, &transcript_id, i, total, "transcribe");
 
+        let checkpoint = cache_dir.join(format!("{i}.json"));
+        if let Ok(cached) = tokio::fs::read_to_string(&checkpoint).await {
+            if let Ok(text) = serde_json::from_str::<Option<String>>(&cached) {
+                if let Some(text) = text {
+                    texts.push(text);
+                }
+                emit_progress(&app, &t.note_id, &transcript_id, i + 1, total, "transcribe");
+                continue;
+            }
+        }
         let wav = tokio::fs::read(chunk_path).await?;
+        if asr::is_digital_silence(&wav) {
+            tokio::fs::write(&checkpoint, "null").await?;
+            emit_progress(&app, &t.note_id, &transcript_id, i + 1, total, "transcribe");
+            continue;
+        }
         let duration = asr::wav_duration_secs(wav.len());
 
         // G-TASK-008 — 3 attempts, exponential backoff.
@@ -207,8 +275,12 @@ async fn run(
             .await
             {
                 Ok(text) => {
-                    raw = text;
-                    break;
+                    if text.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+                        raw = text;
+                        break;
+                    }
+                    // Empty output for non-silent audio is not successful ASR.
+                    tracing::warn!(chunk = i, "ASR returned empty output for non-silent audio");
                 }
                 Err(e) => {
                     if attempt == 2 {
@@ -222,12 +294,14 @@ async fn run(
         }
 
         if let Some(raw_text) = raw {
-            // eb0b667 — store ASR raw output directly. The LLM post-process
-            // (normalizer) was removed: it degraded quality vs raw ASR and had
-            // long been disabled in production.
-            if !raw_text.trim().is_empty() {
-                texts.push(raw_text);
-            }
+            tokio::fs::write(
+                &checkpoint,
+                serde_json::to_vec(&Some(&raw_text)).map_err(|e| Error::Other(e.to_string()))?,
+            )
+            .await?;
+            texts.push(raw_text);
+        } else {
+            failed_chunks.push(i);
         }
         // Chunk done — advance to *completed*-chunk count (Meetzy uses
         // current/total of completed chunks). The per-chunk-start emit above
@@ -237,6 +311,29 @@ async fn run(
         emit_progress(&app, &t.note_id, &transcript_id, i + 1, total, "transcribe");
     }
 
+    if !failed_chunks.is_empty() {
+        let missing = failed_chunks
+            .iter()
+            .map(|i| {
+                format!(
+                    "{}–{}s",
+                    i * chunk_seconds as usize,
+                    (i + 1) * chunk_seconds as usize
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        timeline::post(
+            &pool,
+            &t.note_id,
+            "transcribe_incomplete",
+            &format!("전사 누락 구간: {missing}. 재시도하면 성공한 구간을 재사용합니다."),
+        )
+        .await?;
+        return Err(Error::Other(format!(
+            "Incomplete transcription: {missing}. Successful chunks are cached for retry."
+        )));
+    }
     let full = texts.join("\n\n");
     if full.trim().is_empty() {
         return Err(Error::Other(
@@ -264,7 +361,14 @@ async fn run(
     .await;
     let _ = app.emit("note:updated", t.note_id.clone());
     // F-DESKTOP-004 — ping the user (app may be tray-minimized).
-    crate::worker::notify(&app, &pool, "notify_transcribe", "전사 완료", &format!("{} — 본문을 정리하고 있어요", note.title)).await;
+    crate::worker::notify(
+        &app,
+        &pool,
+        "notify_transcribe",
+        "전사 완료",
+        &format!("{} — 본문을 정리하고 있어요", note.title),
+    )
+    .await;
 
     // Tidy the chunk WAVs (keep raw.txt).
     let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
@@ -274,7 +378,11 @@ async fn run(
     // G-TASK-003 — auto-chain to generate (minutes). freeform 노트는 채팅에 첨부한
     // 녹음을 전사하는 것이라 회의록 생성을 타지 않는다 — 전송 핸들러(run_attachment_turn)
     // 가 전사 텍스트를 run_write로 노트에 종합한다.
-    if note.note_type.as_deref() != Some("freeform") {
+    if note.note_type.as_deref() != Some("freeform")
+        && crate::repo::note_bodies::get_active(&pool, &t.note_id)
+            .await?
+            .is_none()
+    {
         if let Err(e) =
             crate::worker::generate::dispatch(&app, &pool, &t.note_id, &transcript_id, &text_rel)
                 .await

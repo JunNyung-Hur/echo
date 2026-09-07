@@ -58,6 +58,8 @@ const TOOL_LABEL: Record<string, DictKey> = {
   write_note: "chat.tool.writeNote",
   get_recording_download_url: "chat.tool.recordingUrl",
   read_transcript: "chat.tool.readTranscript",
+  search_transcripts: "chat.tool.searchTranscripts",
+  read_transcript_range: "chat.tool.readTranscript",
   retry_transcribe: "chat.tool.retryTranscribe",
   retry_failed_task: "chat.tool.retryTask",
 };
@@ -70,6 +72,8 @@ const TOOL_STEP_LABEL: Record<string, DictKey> = {
   write_note: "chat.step.writeNote",
   get_recording_download_url: "chat.step.recordingUrl",
   read_transcript: "chat.step.readTranscript",
+  search_transcripts: "chat.step.searchTranscripts",
+  read_transcript_range: "chat.step.readTranscript",
   transcribe_attachment: "chat.step.transcribeAttachment",
   retry_transcribe: "chat.step.retryTranscribe",
   retry_failed_task: "chat.step.retryTask",

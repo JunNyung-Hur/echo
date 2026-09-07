@@ -116,8 +116,20 @@ pub async fn archive_and_create_completed(
     initial_context_snapshot: Option<&str>,
     is_manual: bool,
     refine_request: Option<&str>,
+    expected_active_id: Option<&str>,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM note_bodies WHERE note_id = ? AND archived = 0 AND status = 'completed'",
+    )
+    .bind(note_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if current.as_deref() != expected_active_id {
+        return Err(Error::Other(
+            "The note changed while editing. Read the current version and retry.".into(),
+        ));
+    }
     sqlx::query("UPDATE note_bodies SET archived = 1 WHERE note_id = ? AND archived = 0")
         .bind(note_id)
         .execute(&mut *tx)

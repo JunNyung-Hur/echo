@@ -38,7 +38,7 @@ From capture to organized notes, the organizing is done by asking an AI agent li
 
 ### Transcription & note organizing
 
-- ASR results are post-processed by an LLM for formatting and mis-hearing fixes.
+- Raw ASR output is retained as evidence. Failed chunks block completion and successful chunks are cached for retry.
 - For freeform attachments, each recording is transcribed and merged into the note (existing content preserved, different topics split into sections).
 - Length and structure adjust to the amount and nature of the input.
 

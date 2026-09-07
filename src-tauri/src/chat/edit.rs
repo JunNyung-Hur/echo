@@ -8,6 +8,41 @@
 
 use serde_json::{json, Value};
 
+/// Insert new Markdown without asking a model to regenerate existing content.
+/// A supplied anchor must match exactly once; every old byte is preserved.
+pub fn insert_content(current: &str, content: &str, after: Option<&str>) -> Result<String, String> {
+    if content.trim().is_empty() {
+        return Err("New content is empty".into());
+    }
+    let end = match after.filter(|a| !a.is_empty()) {
+        Some(anchor) => {
+            if current.matches(anchor).count() != 1 {
+                return Err(
+                    "Insertion anchor must match exactly once; read the current note again".into(),
+                );
+            }
+            current.find(anchor).unwrap() + anchor.len()
+        }
+        None => current.len(),
+    };
+    let prefix = if end == 0 || current[..end].ends_with("\n\n") {
+        ""
+    } else {
+        "\n\n"
+    };
+    let suffix = if end == current.len() || current[end..].starts_with("\n\n") {
+        ""
+    } else {
+        "\n\n"
+    };
+    Ok(format!(
+        "{}{prefix}{}{suffix}{}",
+        &current[..end],
+        content.trim(),
+        &current[end..]
+    ))
+}
+
 /// 렌더 시 *보이는* 텍스트만 추출(공백 정규화) — HTML 주석/스타일/스크립트/태그 제거.
 /// diff 표시용 + edit 가 실제로 보이는 변화를 만들었는지 비교하는 용도.
 pub fn visible_text(content: &str) -> String {
@@ -116,7 +151,10 @@ pub fn apply_str_edits(content: &str, edits: &[Value]) -> (String, Vec<Value>, V
     for e in edits {
         let old = e.get("old").and_then(|v| v.as_str());
         let new = e.get("new").and_then(|v| v.as_str());
-        let replace_all = e.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let replace_all = e
+            .get("replace_all")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let (Some(old), Some(new)) = (old, new) else {
             errors.push("각 편집은 old(찾을 스니펫)와 new(대체 텍스트)가 필요합니다.".to_string());
             continue;
@@ -196,6 +234,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn insertion_preserves_other_sections_and_rejects_ambiguous_anchor() {
+        let before = "# 계획\n\n## A\n- 조건부 배포\n\n## B\n- 금액 130만원";
+        let inserted = insert_content(before, "- 보안 검토 필요", Some("- 조건부 배포")).unwrap();
+        assert_eq!(inserted.replace("\n\n- 보안 검토 필요", ""), before);
+        assert!(insert_content("반복 반복", "새 내용", Some("반복")).is_err());
+        assert_eq!(insert_content("", "# 시작", None).unwrap(), "# 시작");
+        assert!(insert_content(before, " ", None).is_err());
+    }
+
+    #[test]
     fn unique_replace() {
         let (out, diffs, errs) = apply_str_edits(
             "# 제목\n\n- 항목 하나\n- 항목 둘\n",
@@ -208,8 +256,7 @@ mod tests {
 
     #[test]
     fn ambiguous_without_replace_all() {
-        let (_, _, errs) =
-            apply_str_edits("aaa bbb aaa", &[json!({"old": "aaa", "new": "ccc"})]);
+        let (_, _, errs) = apply_str_edits("aaa bbb aaa", &[json!({"old": "aaa", "new": "ccc"})]);
         assert_eq!(errs.len(), 1);
         assert!(errs[0].contains("replace_all"));
     }
