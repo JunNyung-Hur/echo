@@ -33,6 +33,8 @@ pub mod ffmpeg;
 pub mod models;
 #[path = "../../../src-tauri/src/repo/note_bodies.rs"]
 pub mod note_bodies;
+#[path = "../../../src-tauri/src/chat/note_view.rs"]
+pub mod note_view;
 #[path = "../../../src-tauri/src/chat/prompt.rs"]
 pub mod prompt;
 #[path = "../../../src-tauri/src/chat/source.rs"]

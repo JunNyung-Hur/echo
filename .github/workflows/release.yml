@@ -38,20 +38,26 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm ci --prefix src-ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify source
         run: |
           npm run build --prefix src-ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --manifest-path tools/core-check/Cargo.toml --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo check --locked --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Download pinned LGPL FFmpeg
         shell: pwsh
         run: |
-          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-8.1.zip'
-          $expected = 'c5aa818e5dd38464c286d59c318d932d7cbeba8f31a21228194eb5ef172e7b83'
+          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-07-15-39/ffmpeg-n8.1.2-51-g7ba069f4f1-win64-lgpl-8.1.zip'
+          $expected = '232464b6f9f1d55fa42c1b0e7ae1c9ca5a19272ba61229e8b32a93751055e135'
           Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
           $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "FFmpeg checksum mismatch: $actual" }
@@ -82,5 +88,5 @@ jobs:
           gh release create "${{ github.ref_name }}" release-artifacts/* `
             --repo "${{ github.repository }}" `
             --title "echo ${{ github.ref_name }}" `
-            --notes-file docs/public/release-notes/0.0.4.md `
-            --verify-tag
+            --notes-file "docs/public/release-notes/$((Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version).md" `
+            --verify-tag --latest

@@ -335,8 +335,10 @@ fn section_minutes_state(ctx: &PromptCtx) -> String {
             b.status,
             fmt_elapsed(&Some(b.updated_at.clone()))
         ));
+    } else if ctx.note_type == Some("freeform") {
+        lines.push("- 현재 필기형 노트: 존재함. 본문은 아직 비어 있음. write_note로 첫 내용을 바로 작성할 수 있으며 제목이나 별도 노트 생성은 필요하지 않음. 질문만 받은 경우에는 작성하지 않고 답변.".to_string());
     } else {
-        lines.push("- 활성 노트: 없음".to_string());
+        lines.push("- 완성된 노트 본문: 아직 없음".to_string());
     }
     if failed.is_some() && in_progress.is_none() && active.is_none() {
         lines.push("- ⚠ 직전 실패한 노트 정리 task: 있음. 사용자가 재시도 의사를 표하면 `retry_failed_task` 호출.".to_string());

@@ -105,6 +105,50 @@ async fn database() -> sqlx::SqlitePool {
 }
 
 #[tokio::test]
+async fn empty_notebook_is_readable_but_missing_or_processing_is_not_empty() {
+    let pool = database().await;
+    let empty = note_view::read(&pool, "n").await;
+    assert_eq!(empty["ok"], true);
+    assert_eq!(empty["content"], "");
+    assert_eq!(empty["body_state"], "empty");
+    assert_eq!(empty["can_write"], true);
+    assert!(empty["version_id"].is_null());
+    assert!(note_bodies::list_for_note(&pool, "n").await.unwrap().is_empty());
+    assert_eq!(note_view::read(&pool, "missing").await["ok"], false);
+
+    sqlx::query("UPDATE notes SET note_type = 'minutes' WHERE id = 'other'")
+        .execute(&pool).await.unwrap();
+    assert_eq!(note_view::read(&pool, "other").await["body_state"], "unavailable");
+    note_bodies::create_processing(&pool, "n", None, "task", "{}").await.unwrap();
+    let processing = note_view::read(&pool, "n").await;
+    assert_eq!(processing["ok"], false);
+    assert_eq!(processing["body_state"], "processing");
+}
+
+#[tokio::test]
+async fn note_read_preserves_existing_content_and_does_not_hide_file_loss() {
+    let pool = database().await;
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-data");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let path = dir.join(format!("note-view-{}.md", uuid::Uuid::new_v4()));
+    let content = "# 직접 쓴 필기\n\n- 조건: 검토 후 진행 📝\n";
+    tokio::fs::write(&path, content).await.unwrap();
+    note_bodies::archive_and_create_completed(
+        &pool, "v1", "n", None, path.to_str().unwrap(), "{}", None, None, false, None, None,
+    ).await.unwrap();
+    let read = note_view::read(&pool, "n").await;
+    assert_eq!(read["content"], content);
+    assert_eq!(read["version_id"], "v1");
+    assert_eq!(read["body_state"], "ready");
+    assert_eq!(note_view::read(&pool, "other").await["body_state"], "empty");
+    tokio::fs::remove_file(&path).await.unwrap();
+    let broken = note_view::read(&pool, "n").await;
+    assert_eq!(broken["ok"], false);
+    assert!(broken.get("content").is_none());
+    assert_eq!(note_bodies::get_active(&pool, "n").await.unwrap().unwrap().id, "v1");
+}
+
+#[tokio::test]
 async fn source_lookup_is_note_scoped_and_can_read_beyond_preview() {
     let pool = database().await;
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-data");

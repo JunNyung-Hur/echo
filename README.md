@@ -21,9 +21,11 @@ echo is a personal desktop notebook for meetings, lectures, interviews, and ever
 
 Both support Markdown, manual editing, version history, tags, and a Korean / English interface. Freeform notes also have four visual styles: Minimal, Notepad, Report, and Colorful.
 
-## What changed in 0.0.4
+## What changed in 0.0.5
 
-This source tree targets **0.0.4**. See [release preparation notes](docs/public/release-notes/0.0.4.md); downloadable installers are listed separately on [GitHub Releases](https://github.com/JunNyung-Hur/echo/releases).
+This source tree targets **0.0.5**. Empty freeform notebooks are now reported as valid writing destinations. Reading an empty notebook does not create content, and missing files or ongoing generation are not treated as empty notes. See the [release notes](docs/public/release-notes/0.0.5.md) and [GitHub Releases](https://github.com/JunNyung-Hur/echo/releases) for installers.
+
+The following improvements from 0.0.4 remain available:
 
 - **An agent that can consult the recording's text.** It can search completed transcripts attached to the current note and read passages beyond the preview when answering or editing.
 - **Additions that preserve the existing note.** New freeform content is inserted directly. Changes to existing text use explicit edits, with version checks that reject stale agent edits.

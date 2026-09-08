@@ -16,3 +16,4 @@ pub mod prompt;
 pub mod refine;
 pub mod tools;
 pub mod source;
+pub mod note_view;

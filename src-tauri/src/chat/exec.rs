@@ -27,7 +27,7 @@ pub async fn execute_tool(
     args: &Value,
 ) -> Value {
     match name {
-        "read_minutes" => read_minutes(pool, note_id).await,
+        "read_minutes" => super::note_view::read(pool, note_id).await,
         "edit_minutes" => edit_minutes(app, pool, note_id, args).await,
         "set_theme" => set_theme(app, pool, note_id, args).await,
         "write_note" => write_note_handler(app, pool, note_id, args).await,
@@ -39,25 +39,6 @@ pub async fn execute_tool(
         "retry_transcribe" => retry_transcribe(app, pool, note_id).await,
         "retry_failed_task" => retry_failed_task(app, pool, note_id).await,
         other => json!({ "ok": false, "error": format!("알 수 없는 도구: {other}") }),
-    }
-}
-
-/// 현재 활성 노트 본문 전체를 조회 — '현재 본문'의 단일 진실 소스(view→edit 패턴).
-/// system prompt 에 본문을 박지 않고(스냅샷이 편집 후 낡음) 이 툴로 항상 최신 조회.
-async fn read_minutes(pool: &DbPool, note_id: &str) -> Value {
-    let active = match note_bodies::get_active(pool, note_id).await {
-        Ok(Some(b)) => b,
-        Ok(None) => return json!({ "ok": false, "error": "활성 노트가 없음(또는 편집 진행 중)" }),
-        Err(e) => return json!({ "ok": false, "error": e.to_string() }),
-    };
-    let Some(path) = active.content_path.clone() else {
-        return json!({ "ok": false, "error": "노트 본문 파일 경로가 없음" });
-    };
-    match tokio::fs::read_to_string(crate::storage::resolve(&path)).await {
-        // 활성 본문 전체 반환(마크다운; 레거시는 HTML일 수 있음) — edit_minutes 의
-        // old 매칭과 Q&A 의 단일 진실 소스라 완전해야 한다.
-        Ok(content) => json!({ "ok": true, "content": content, "version_id": active.id }),
-        Err(e) => json!({ "ok": false, "error": format!("노트 본문 로드 실패: {e}") }),
     }
 }
 
