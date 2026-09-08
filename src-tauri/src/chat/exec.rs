@@ -296,18 +296,23 @@ async fn retry_transcribe(app: &AppHandle, pool: &DbPool, note_id: &str) -> Valu
 /// Restart only the failed stage: a failed body → re-generate from the existing
 /// transcript (fast); a failed transcript → full re-transcribe.
 async fn retry_failed_task(app: &AppHandle, pool: &DbPool, note_id: &str) -> Value {
-    let bodies = note_bodies::list_for_note(pool, note_id)
-        .await
-        .unwrap_or_default();
-    let ts = transcripts::list_for_note(pool, note_id)
-        .await
-        .unwrap_or_default();
+    let bodies = match note_bodies::list_for_note(pool, note_id).await {
+        Ok(bodies) => bodies,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let ts = match transcripts::list_for_note(pool, note_id).await {
+        Ok(ts) => ts,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
 
     let failed_body = bodies
         .iter()
         .find(|b| b.archived == 0 && b.status == "failed");
-    let completed_t = ts.iter().find(|t| t.status == "completed");
-    if let (Some(b), Some(t)) = (failed_body, completed_t) {
+    if let Some(b) = failed_body {
+        let Some(t) = ts.iter().find(|t| t.status == "completed"
+            && b.transcript_id.as_deref() == Some(t.id.as_str())) else {
+            return json!({"ok": false, "error": "The failed note's original transcript is unavailable. Another recording will not be substituted."});
+        };
         let Some(path) = t.corrected_path.clone().or_else(|| t.raw_path.clone()) else {
             return json!({ "ok": false, "error": "전사록 파일 경로가 없습니다." });
         };

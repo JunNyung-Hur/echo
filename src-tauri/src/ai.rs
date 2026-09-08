@@ -26,7 +26,15 @@ const RUNAWAY_CHARS: usize = 200_000;
 /// endpoint 별 모델 옵션 적용 (b7ba31c) — max_tokens 설정 시 max_completion_tokens,
 /// disable_thinking 시 chat_template_kwargs.enable_thinking=false (llama.cpp/vLLM
 /// Qwen3 계열 thinking 끄기).
-fn apply_llm_options(payload: &mut serde_json::Value, endpoint: &AiEndpoint) {
+pub(crate) fn apply_llm_options(payload: &mut serde_json::Value, endpoint: &AiEndpoint) {
+    // Reasoning models may only accept the default sampling value. Omission
+    // works across GPT-5 versions and dated/provider-prefixed model IDs.
+    let model = endpoint.model_id.rsplit('/').next().unwrap_or(&endpoint.model_id);
+    if model.starts_with("gpt-5") || model.starts_with("gpt-6")
+        || ["o1", "o3", "o4"].iter().any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
+    {
+        payload.as_object_mut().unwrap().remove("temperature");
+    }
     if let Some(mt) = endpoint.max_tokens {
         if mt > 0 {
             payload["max_completion_tokens"] = json!(mt);
@@ -346,7 +354,7 @@ pub async fn chat_with_tools_streaming(
     decoder.finish().map_err(Error::Other)?;
     if !completed {
         return Err(Error::Other(
-            "Model stream ended before completion; no changes were applied.".into(),
+            "Model stream ended before completion; this response's tool calls were not applied. Earlier successful changes are preserved.".into(),
         ));
     }
     let tool_calls: Vec<ToolCall> = tool_accum
@@ -367,6 +375,9 @@ pub async fn chat_with_tools_streaming(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    if content.trim().is_empty() && tool_calls.is_empty() {
+        return Err(Error::Other("Model returned no answer or tool call".into()));
+    }
     Ok(ChatTurn {
         content,
         tool_calls,

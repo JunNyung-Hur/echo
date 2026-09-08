@@ -23,14 +23,15 @@ const MINUTES_RULE2_EN: &str = "2. **Language** — Write the entire minutes in 
 /// + 최상단에 강한 영어 지시(약한 모델이 한국어 전사에 끌리는 것 차단). 그 외(ko
 /// 포함)는 KO rule 2만 끼운 byte-identical 프롬프트.
 pub fn minutes_system_prompt(target_lang: &str) -> String {
-    if target_lang == "en" {
+    let prompt = if target_lang == "en" {
         let body = MINUTES_SYSTEM_PROMPT_TEMPLATE.replace("__RULE2__", MINUTES_RULE2_EN);
         format!(
             "# OUTPUT LANGUAGE — ENGLISH ONLY\nWrite the ENTIRE minutes in English. The transcript is likely in Korean — translate its content into natural English. Do NOT output Korean sentences.\n\n{body}"
         )
     } else {
         MINUTES_SYSTEM_PROMPT_TEMPLATE.replace("__RULE2__", MINUTES_RULE2_KO)
-    }
+    };
+    format!("{prompt}\n\n{}", include_str!("prompts/note_quality.md"))
 }
 
 /// One-line list-preview summary (fills note.description once).

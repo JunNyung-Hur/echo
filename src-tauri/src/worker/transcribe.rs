@@ -246,11 +246,17 @@ async fn run(
         let checkpoint = cache_dir.join(format!("{i}.json"));
         if let Ok(cached) = tokio::fs::read_to_string(&checkpoint).await {
             if let Ok(text) = serde_json::from_str::<Option<String>>(&cached) {
-                if let Some(text) = text {
-                    texts.push(text);
+                if text.as_deref().is_some_and(asr::has_repetition_loop) {
+                    // Old successful caches can contain degenerate ASR output.
+                    // Fall through to the existing bounded audio retry path.
+                    tracing::warn!(chunk = i, "Retrying repetitive cached ASR output");
+                } else {
+                    if let Some(text) = text {
+                        texts.push(text);
+                    }
+                    emit_progress(&app, &t.note_id, &transcript_id, i + 1, total, "transcribe");
+                    continue;
                 }
-                emit_progress(&app, &t.note_id, &transcript_id, i + 1, total, "transcribe");
-                continue;
             }
         }
         let wav = tokio::fs::read(chunk_path).await?;
@@ -275,6 +281,10 @@ async fn run(
             .await
             {
                 Ok(text) => {
+                    if text.as_deref().is_some_and(asr::has_repetition_loop) {
+                        tracing::warn!(chunk = i, attempt, "ASR repetition loop; retrying audio");
+                        continue;
+                    }
                     if text.as_deref().is_some_and(|s| !s.trim().is_empty()) {
                         raw = text;
                         break;

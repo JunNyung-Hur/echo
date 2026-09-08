@@ -12,4 +12,4 @@ Start with the [English README](../../README.md) or [한국어 README](../../REA
 | [Release history](release-notes/README.md) | Changes by version and release preparation status |
 | [Quality evaluation](../../tools/core-check/README.md) | Regression checks, real-model fixtures, and desktop scenarios |
 
-The current source version is **0.0.5**. These docs describe the source tree; consult [GitHub Releases](https://github.com/JunNyung-Hur/echo/releases) for available installers and their version-specific notes.
+The current source version is **0.0.6**. These docs describe the source tree; consult [GitHub Releases](https://github.com/JunNyung-Hur/echo/releases) for available installers and their version-specific notes.

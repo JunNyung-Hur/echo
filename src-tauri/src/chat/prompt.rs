@@ -156,6 +156,7 @@ pub fn build_system_prompt(ctx: &PromptCtx) -> String {
         parts.push(PRODUCT_OVERVIEW.to_string());
     }
     parts.push(PERSONA.to_string());
+    parts.push(include_str!("../prompts/note_quality.md").to_string());
     parts.push(RESPONSE_RULES.to_string());
     parts.push(HONESTY_TURN_RULES.to_string());
     parts.push(ACCOUNTABILITY.to_string());

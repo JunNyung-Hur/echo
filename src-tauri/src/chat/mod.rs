@@ -10,6 +10,7 @@
 //! 한국어 프롬프트/도구 설명 워딩은 Meetzy 원문 기준 — 임의 paraphrase 금지.
 
 pub mod agent;
+pub mod work_context;
 pub mod edit;
 pub mod exec;
 pub mod prompt;

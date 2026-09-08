@@ -31,9 +31,9 @@ fn stage_tools(stage: &str) -> Vec<&'static str> {
             "retry_failed_task",
             "ask_user",
         ],
-        // `done` (and any unknown stage → full set). set_theme 는 freeform 전용 —
+        // `done`. set_theme 는 freeform 전용 —
         // 회의록 작성형은 고정 기본 테마(Meetzy 동일: 디자인 요청은 안내로 거절).
-        _ => vec![
+        "done" => vec![
             "read_minutes",
             "edit_minutes",
             "get_recording_download_url",
@@ -44,6 +44,7 @@ fn stage_tools(stage: &str) -> Vec<&'static str> {
             "read_transcript_range",
             "ask_user",
         ],
+        _ => vec!["ask_user"],
     }
 }
 

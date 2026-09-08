@@ -21,9 +21,9 @@ echo는 회의, 강의, 인터뷰, 일상 메모를 위한 개인용 데스크�
 
 Markdown, 직접 편집, 버전 복원, 태그, 한국어·영어 UI를 지원합니다. 필기형에서는 Minimal, Notepad, Report, Colorful 중 노트 스타일을 선택할 수 있습니다.
 
-## 0.0.5에서 달라진 점
+## 0.0.6에서 달라진 점
 
-현재 소스 버전은 **0.0.5**입니다. 빈 필기형 노트도 바로 작성할 수 있는 대상으로 안내합니다. 빈 노트 조회만으로 본문을 생성하지 않으며, 파일 손상이나 생성 중 상태와 구분합니다. [릴리스 내역](docs/public/release-notes/0.0.5.md)과 [설치 파일](https://github.com/JunNyung-Hur/echo/releases)을 확인하세요.
+현재 소스 버전은 **0.0.6**입니다. 대화·기존 노트·녹음 자료와 실제 도구 실행 결과를 연결하고, 개별 작업 성공과 요청 전체 완료를 구분하도록 개선했습니다. 복합 요청이 중간에 종료되는 경로, 모델 temperature 호환성을 수정하고 GPT-5.6 모델 선택지를 추가했습니다. 변경 내용과 검증 범위는 [릴리스 내역](docs/public/release-notes/0.0.6.md), 설치 파일은 [GitHub Releases](https://github.com/JunNyung-Hur/echo/releases)를 확인하세요.
 
 0.0.4에서 추가한 다음 기능도 유지됩니다.
 

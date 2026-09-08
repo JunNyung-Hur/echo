@@ -23,6 +23,10 @@ pub mod db {
 }
 #[path = "../../../src-tauri/src/ai.rs"]
 pub mod ai;
+#[path = "../../../src-tauri/src/chat/work_context.rs"]
+pub mod work_context;
+#[path = "../../../src-tauri/src/repo/chat.rs"]
+pub mod chat_repo;
 #[path = "../../../src-tauri/src/asr.rs"]
 pub mod asr;
 #[path = "../../../src-tauri/src/chat/edit.rs"]

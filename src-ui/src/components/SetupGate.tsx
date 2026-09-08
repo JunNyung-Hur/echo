@@ -280,20 +280,44 @@ const OPENAI_LLM_MODELS = [
   {
     id: "gpt-5.4-nano-2026-03-17",
     title: "GPT-5.4 nano",
-    ko: "가장 저렴하고 빨라요",
-    en: "Cheapest and fastest",
+    ko: "짧고 단순한 메모용",
+    en: "For short, simple notes",
   },
   {
     id: "gpt-5.4-mini-2026-03-17",
     title: "GPT-5.4 mini",
-    ko: "저렴하고 충분히 똑똑해요 (추천)",
-    en: "Affordable and capable (recommended)",
+    ko: "낮은 비용의 범용 모델",
+    en: "Low-cost general-purpose model",
+  },
+  {
+    id: "gpt-5.4",
+    title: "GPT-5.4",
+    ko: "일반형 5.4 모델",
+    en: "Standard GPT-5.4 model",
   },
   {
     id: "gpt-5.5-2026-04-23",
     title: "GPT-5.5",
-    ko: "가장 똑똑하지만 매우 비싸요",
-    en: "Smartest, but very pricey",
+    ko: "복잡한 내용 정리용",
+    en: "For complex material",
+  },
+  {
+    id: "gpt-5.6-luna",
+    title: "GPT-5.6 Luna",
+    ko: "5.6 시리즈의 비용 절약형",
+    en: "Cost-focused GPT-5.6 model",
+  },
+  {
+    id: "gpt-5.6-terra",
+    title: "GPT-5.6 Terra",
+    ko: "5.6 시리즈의 성능·비용 균형형",
+    en: "Balances capability and cost",
+  },
+  {
+    id: "gpt-5.6-sol",
+    title: "GPT-5.6 Sol",
+    ko: "5.6 시리즈의 상위 모델",
+    en: "Flagship GPT-5.6 model",
   },
 ];
 const OPENAI_ASR_MODELS = [

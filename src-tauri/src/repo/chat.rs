@@ -10,6 +10,25 @@ use uuid::Uuid;
 use crate::error::Result;
 use crate::models::{ChatMessage, Recording};
 
+/// Persist user text and source links atomically; failed links are not text-only requests.
+pub async fn create_user_with_recordings(
+    pool: &SqlitePool, note_id: &str, content: &str, recording_ids: &[String],
+) -> Result<String> {
+    let id = Uuid::new_v4().to_string();
+    let mut tx = pool.begin().await?;
+    sqlx::query("INSERT INTO note_chat_messages (id, note_id, role, content) VALUES (?, ?, 'user', ?)")
+        .bind(&id).bind(note_id).bind(content).execute(&mut *tx).await?;
+    for recording_id in recording_ids {
+        let changed = sqlx::query("UPDATE recordings SET chat_message_id = ?, consumed_at = datetime('now') WHERE id = ? AND note_id = ?")
+            .bind(&id).bind(recording_id).bind(note_id).execute(&mut *tx).await?;
+        if changed.rows_affected() != 1 {
+            return Err(crate::error::Error::InvalidInput("Recording is missing or belongs to another note".into()));
+        }
+    }
+    tx.commit().await?;
+    Ok(id)
+}
+
 pub async fn list_for_note(pool: &SqlitePool, note_id: &str) -> Result<Vec<ChatMessage>> {
     let mut msgs = sqlx::query_as::<_, ChatMessage>(
         "SELECT * FROM note_chat_messages WHERE note_id = ? ORDER BY created_at ASC, rowid ASC",

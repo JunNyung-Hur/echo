@@ -25,6 +25,22 @@ use crate::models::AiEndpoint;
 
 const ASR_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Conservative degeneration signal, not a general transcript quality score.
+/// A long sentence repeated consecutively eight times should be retried from
+/// audio, never silently deduplicated and treated as recovered speech.
+pub fn has_repetition_loop(text: &str) -> bool {
+    let mut previous = String::new();
+    let mut run = 0;
+    for sentence in text.split(['.', '!', '?', '\n']) {
+        let sentence = sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+        if sentence.is_empty() { continue; }
+        if sentence.chars().count() < 12 { previous.clear(); run = 0; continue; }
+        if sentence == previous { run += 1; } else { previous = sentence; run = 1; }
+        if run >= 8 { return true; }
+    }
+    false
+}
+
 fn language_hint(language: &str) -> &'static str {
     match language {
         "kor" => " The audio is in Korean. Transcribe it in Korean (Hangul) only.",
